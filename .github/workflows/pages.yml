@@ -122,16 +122,24 @@ jobs:
           name: large-manifest
           path: build/large-manifest
 
+      # Clip sharing turns on once SUPABASE_URL and SUPABASE_KEY (the publishable key) are set
+      # as repository variables. They are public by design; build_site.py refuses a secret key.
       - name: Assemble site
         env:
           HF_REPO: ${{ vars.HF_REPO }}
+          SUPABASE_URL: ${{ vars.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ vars.SUPABASE_KEY }}
         run: |
           python tools/build_site.py pack --model-dir build/model --report build/report.json --out build/pack
           remote=()
           if [ -f build/large-manifest/manifest.json ]; then
             remote=(--remote "build/large-manifest/manifest.json=https://huggingface.co/$HF_REPO/resolve/main/$LARGE_CARD/")
           fi
-          python tools/build_site.py site --local build/pack "${remote[@]}" --out site
+          collect=()
+          if [ -n "$SUPABASE_URL" ]; then
+            collect=(--collect-url "$SUPABASE_URL" --collect-key "$SUPABASE_KEY")
+          fi
+          python tools/build_site.py site --local build/pack "${remote[@]}" "${collect[@]}" --out site
 
       - uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3
         with:

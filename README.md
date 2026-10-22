@@ -7,7 +7,22 @@ A transcription tool for Mauritian Creole (Kreol Morisien) audio. *Koze* is Kreo
 - **Web app** (`web/`): tap to talk, get a Kreol transcript. Meta's Omnilingual ASR CTC models run in the browser, on WebGPU when available and otherwise on WebAssembly. There are two sizes: 300M (about 350 MB, hosted with the site) and 1B (about 1 GB, hosted on Hugging Face because GitHub Pages caps a site at 1 GB). The page recommends a size from what the browser reveals and a speed check, downloads the model once and caches it. Audio never leaves the device. It is deployed to GitHub Pages by `.github/workflows/pages.yml`.
 - **Model harness** (`harness/`): a Python/Gradio app that compares every Omnilingual ASR model and size, scores against reference transcripts, and logs runs. It runs on Colab or a Mac.
 
-### How the web model is made
+### Collecting Kreol speech
+
+After each transcription the page offers an optional "Help teach it Kreol" form: play the clip back, correct the transcript, rate it, tag what went wrong and which languages were spoken, and share. The first share shows a consent screen (18+, what is sent and why, an opt-in for open release, and optional speaker details). Uploads also need "everyone who speaks agreed". Shared clips can be withdrawn from the same browser.
+
+Each shared clip stores the 16 kHz mono WAV the model heard, the model's output untouched, the corrected text exactly as typed, whether the contributor aimed for Grafi Larmoni spelling, the feedback, the model and backend, and the consent version.
+
+Storage is a free Supabase project. The page only holds its public key, and `supabase/schema.sql` limits that key to adding a clip, uploading its audio and withdrawing a clip with its token. It can't read, list or overwrite anything. `tools/export_dataset.py` uses the service-role key on your own machine to download everything as a Hugging Face audiofolder dataset, optionally push it, and delete withdrawn audio.
+
+To turn it on:
+1. Create a Supabase project (free tier) and run `supabase/schema.sql` in its SQL editor.
+2. In this repo's Settings > Secrets and variables > Actions > Variables, set `SUPABASE_URL` (like `https://abcd.supabase.co`) and `SUPABASE_KEY` (the publishable or anon key, never the secret/service-role key; the build refuses those).
+3. Re-run the Pages workflow. Without these variables the form stays hidden.
+
+The free tier holds about 1 GB of audio, roughly 8 hours, and pauses a project after a week with no requests (unpause it from the dashboard; nothing is lost). Export to Hugging Face before it fills.
+
+
 
 `tools/export_onnx.py` converts a CTC model to ONNX and makes 8-bit copies. `tools/verify_onnx.py` checks them against Meta's PyTorch pipeline on synthesised Kreol speech: the fp32 graph must match it, and the 8-bit file that ships must change at most 3% of characters. `tools/build_site.py pack` splits the chosen file into 40 MB parts with a SHA-256 for each, and `build_site.py site` assembles the site. CI runs all of this on every PR and deploys on `main`. The check results appear in the job summary.
 
@@ -36,7 +51,6 @@ Mauritian Creole is a low-resource language, so off-the-shelf speech recognition
 ## Planned features
 
 - Upload an audio file, get a timestamped transcript
-- Edit the transcript in the browser; save corrections as training data
 - Optional English translation
 - Export as plain text or SRT/VTT subtitles
 

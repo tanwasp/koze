@@ -9,6 +9,9 @@ model registry (web/models.json) with a SHA-256 for every model part.
 
 The page trusts models.json (served from this site) and checks every downloaded part
 against it, so a model host can't swap in a different file.
+
+With --collect-url and --collect-key (a Supabase project set up with supabase/schema.sql)
+the site also lets people share corrected clips. Only the public key goes in the page.
 """
 
 from __future__ import annotations
@@ -20,6 +23,7 @@ import io
 import json
 import shutil
 import tarfile
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -122,6 +126,36 @@ def model_entry(manifest: dict, base: str) -> dict:
         k: manifest[k] for k in ("bytes", "sha256", "parts", "vocab")}
 
 
+def check_public_key(key: str) -> None:
+    """Refuse anything but a Supabase publishable/anon key: the site is public."""
+    if key.startswith("sb_publishable_"):
+        return
+    if key.startswith("sb_secret_"):
+        raise SystemExit("--collect-key is a secret key. Use the publishable (or anon) key; the page is public.")
+    try:
+        payload = key.split(".")[1]
+        role = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4))).get("role")
+    except (IndexError, ValueError):
+        raise SystemExit("--collect-key doesn't look like a Supabase key")
+    if role != "anon":
+        raise SystemExit(f"--collect-key has role {role!r}. Use the anon key; the page is public.")
+
+
+def add_collection(out: Path, url: str, key: str) -> None:
+    """Write collect.json and let the page's CSP reach the Supabase project."""
+    u = urllib.parse.urlsplit(url)
+    if u.scheme != "https" or not u.hostname or u.path.strip("/"):
+        raise SystemExit("--collect-url must be the project URL, like https://abcd.supabase.co")
+    check_public_key(key)
+    origin = f"https://{u.netloc}"
+    (out / "collect.json").write_text(json.dumps({"url": origin, "key": key}))
+    index = out / "index.html"
+    html = index.read_text()
+    if html.count("connect-src 'self' ") != 1:
+        raise SystemExit("couldn't find connect-src in index.html's CSP")
+    index.write_text(html.replace("connect-src 'self' ", f"connect-src 'self' {origin} "))
+
+
 def build_site(local: list[Path], remote: list[str], out: Path, cache: Path) -> None:
     staged = {}
     for d in local:  # copy before wiping out, in case a local model dir lives inside it
@@ -161,12 +195,16 @@ def main() -> None:
     st.add_argument("--remote", action="append", default=[], help="MANIFEST_PATH=BASE_URL")
     st.add_argument("--out", required=True)
     st.add_argument("--cache", default="build/vendor")
+    st.add_argument("--collect-url", default="", help="Supabase project URL, to turn on clip sharing")
+    st.add_argument("--collect-key", default="", help="that project's publishable (anon) key")
     a = p.parse_args()
     if a.cmd == "pack":
         m = pack(Path(a.model_dir), Path(a.report), Path(a.out))
         print(json.dumps({k: v for k, v in m.items() if k != "parts"} | {"parts": len(m["parts"])}, indent=1))
     else:
         build_site([Path(d) for d in a.local], a.remote, Path(a.out), Path(a.cache))
+        if a.collect_url or a.collect_key:
+            add_collection(Path(a.out), a.collect_url, a.collect_key)
 
 
 if __name__ == "__main__":

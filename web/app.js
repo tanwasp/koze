@@ -3,6 +3,8 @@
 // part. Parts are downloaded once, checked against those hashes, kept in the Cache API,
 // and run with WebGPU when available, otherwise WebAssembly.
 
+import { initCollect, offerClip } from "./collect.js";
+
 const ORT_DIR = new URL("vendor/ort/", location.href).href;
 const SR = 16000;
 const MAX_CHUNK_S = 30;
@@ -413,6 +415,7 @@ async function transcribe(wav, label) {
     ui.meta.textContent = `${fmtTime(seconds)} of audio · transcribed in ${secs.toFixed(1)} s on ${backend === "webgpu" ? "GPU" : "CPU"}`;
     ui.copy.disabled = !text;
     if (text) saveHistory({ text, label, seconds: +seconds.toFixed(1), at: new Date().toISOString() });
+    offerClip({ wav, source: label === "recording" ? "recording" : "upload", modelText: text, model: current, backend });
   } catch (e) {
     ui.meta.innerHTML = "";
     ui.meta.append(span(`Transcription failed: ${e.message || e}`, "err"));
@@ -596,4 +599,5 @@ function renderHistory(items = loadHistory()) {
 }
 
 renderHistory();
+initCollect();
 init();
