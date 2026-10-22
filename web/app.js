@@ -1,7 +1,10 @@
 // Koze: Kreol speech to text in the browser with onnxruntime-web.
 // models.json (served from this site) lists the model sizes with a SHA-256 for every
 // part. Parts are downloaded once, checked against those hashes, kept in the Cache API,
-// and run with WebGPU when available, otherwise WebAssembly.
+// and run with WebGPU when available, otherwise WebAssembly. The optional Kreol voice
+// (models.json "tts") is fetched and checked the same way, the first time it is used.
+
+import { createVoice, sentences, wavBlob } from "./tts.js";
 
 const ORT_DIR = new URL("vendor/ort/", location.href).href;
 const SR = 16000;
@@ -9,6 +12,8 @@ const MAX_CHUNK_S = 30;
 const HISTORY_KEY = "koze-history";
 const MODEL_KEY = "koze-model";
 const SPEED_KEY = "koze-speed";
+const RATE_KEY = "koze-rate";
+const PAUSE_S = 0.25; // between sentences read aloud
 // Recommend a bigger model only if it would transcribe a minute of audio in under ~15 s.
 const MAX_RTF = 0.25;
 
@@ -20,6 +25,8 @@ const ui = {
   mic: $("mic"), micLabel: $("micLabel"), timer: $("timer"), wave: $("wave"), pick: $("pick"), file: $("file"),
   modelBtn: $("modelBtn"), modelName: $("modelName"), modelSpeed: $("modelSpeed"),
   out: $("out"), meta: $("meta"), copy: $("copy"), copyLabel: $("copyLabel"), history: $("history"),
+  listen: $("listen"), speakCard: $("speakCard"), say: $("say"), speak: $("speak"), speakLabel: $("speakLabel"),
+  saveWav: $("saveWav"), sayMeta: $("sayMeta"), voiceSize: $("voiceSize"), voiceCredit: $("voiceCredit"),
 };
 
 let ort, session, vocab, backend;
@@ -29,7 +36,9 @@ let models = [], current = null, device = null, cached = {}, downloading = false
 
 async function init() {
   try {
-    models = (await (await fetch("models.json", { cache: "no-cache" })).json()).models;
+    const reg = await (await fetch("models.json", { cache: "no-cache" })).json();
+    models = reg.models;
+    if (reg.tts) setUpVoice(reg.tts);
     if (!models.length) throw new Error("empty");
   } catch {
     return setStatus("No model published", "err");
@@ -66,12 +75,12 @@ async function sha256Hex(bytes) {
 
 // Parts already in the cache were checked when they were stored. A part fresh from the
 // network must match the hash in models.json before it is used or cached.
-async function fetchModelBytes(m) {
+async function fetchModelBytes(m, progress = showBar) {
   let cache = null;
   try { cache = await caches.open(cacheName(m)); } catch { /* private mode: download without caching */ }
   const buf = new Uint8Array(m.bytes);
   let offset = 0;
-  showBar(0, m.bytes);
+  progress(0, m.bytes);
   for (const part of m.parts) {
     const url = partUrl(m, part.path);
     const start = offset;
@@ -88,7 +97,7 @@ async function fetchModelBytes(m) {
       if (offset + value.length > start + part.bytes) throw new Error(`${part.path} is larger than expected`);
       buf.set(value, offset);
       offset += value.length;
-      showBar(offset / m.bytes, m.bytes);
+      progress(offset / m.bytes, m.bytes);
     }
     const bytes = buf.subarray(start, offset);
     if (fresh) {
@@ -104,11 +113,25 @@ async function fetchModelBytes(m) {
   return buf;
 }
 
+async function fetchCheckedJSON(m, ref, what) {
+  const bytes = new Uint8Array(await (await fetch(partUrl(m, ref.path), { credentials: "omit" })).arrayBuffer());
+  if ((await sha256Hex(bytes)) !== ref.sha256) throw new Error(`The ${what} file failed its integrity check`);
+  return JSON.parse(new TextDecoder().decode(bytes));
+}
+
 async function fetchVocab(m) {
-  const bytes = new Uint8Array(await (await fetch(partUrl(m, m.vocab.path), { credentials: "omit" })).arrayBuffer());
-  if ((await sha256Hex(bytes)) !== m.vocab.sha256) throw new Error("The vocabulary file failed its integrity check");
-  const v = JSON.parse(new TextDecoder().decode(bytes));
+  const v = await fetchCheckedJSON(m, m.vocab, "vocabulary");
   return { pieces: v.pieces, control: new Set(v.control) };
+}
+
+async function getOrt() {
+  if (!ort) {
+    const o = await import(`${ORT_DIR}ort.webgpu.min.mjs`);
+    o.env.wasm.wasmPaths = ORT_DIR;
+    o.env.wasm.numThreads = self.crossOriginIsolated ? Math.min(4, navigator.hardwareConcurrency || 1) : 1;
+    ort = o;
+  }
+  return ort;
 }
 
 async function loadModel(m) {
@@ -117,11 +140,7 @@ async function loadModel(m) {
   try {
     downloading = !cached[m.id];
     setStatus(downloading ? "Downloading…" : "Loading model…", "busy");
-    if (!ort) {
-      ort = await import(`${ORT_DIR}ort.webgpu.min.mjs`);
-      ort.env.wasm.wasmPaths = ORT_DIR;
-      ort.env.wasm.numThreads = self.crossOriginIsolated ? Math.min(4, navigator.hardwareConcurrency || 1) : 1;
-    }
+    await getOrt();
     const [bytes, v] = await Promise.all([fetchModelBytes(m), fetchVocab(m)]);
     cached[m.id] = await isCached(m);
     setStatus("Preparing model…", "busy");
@@ -387,7 +406,11 @@ function ctcGreedy(data, frames, vocabSize, voc) {
 }
 
 async function transcribe(wav, label) {
-  ui.mic.disabled = ui.pick.disabled = true;
+  // The voice and the recogniser share one WebAssembly runtime, so one runs at a time.
+  ui.mic.disabled = ui.pick.disabled = ui.listen.disabled = true;
+  stopSpeaking();
+  transcribing = true;
+  updateSpeak();
   ui.out.textContent = "";
   ui.out.classList.add("working");
   ui.copy.disabled = true;
@@ -411,7 +434,7 @@ async function transcribe(wav, label) {
     const text = parts.join(" ").trim();
     ui.out.textContent = text || "(nothing recognised)";
     ui.meta.textContent = `${fmtTime(seconds)} of audio · transcribed in ${secs.toFixed(1)} s on ${backend === "webgpu" ? "GPU" : "CPU"}`;
-    ui.copy.disabled = !text;
+    ui.copy.disabled = ui.listen.disabled = !text;
     if (text) saveHistory({ text, label, seconds: +seconds.toFixed(1), at: new Date().toISOString() });
   } catch (e) {
     ui.meta.innerHTML = "";
@@ -420,8 +443,135 @@ async function transcribe(wav, label) {
   } finally {
     ui.out.classList.remove("working");
     ui.mic.disabled = ui.pick.disabled = false;
+    transcribing = false;
+    updateSpeak();
   }
 }
+
+// ------------------------------------------------------------------ read aloud
+
+// The voice is a separate model of about 110 MB, so it downloads only when someone first
+// presses Listen. It runs on the CPU (WebAssembly): it is small, and its random sampling
+// operators aren't available on WebGPU.
+let voiceInfo = null, voice = null, voiceLoading = null, playing = null, spoken = null, transcribing = false;
+
+async function setUpVoice(info) {
+  voiceInfo = info;
+  ui.speakCard.hidden = ui.listen.hidden = ui.voiceCredit.hidden = false;
+  const rate = String(readJSON(RATE_KEY) ?? 1);
+  for (const r of document.querySelectorAll("input[name=rate]")) {
+    r.checked = r.value === rate;
+    r.onchange = () => writeJSON(RATE_KEY, +r.value);
+  }
+  ui.voiceSize.textContent = (await isCached(info)) ? "It is saved on this device."
+    : `It downloads once (${fmtBytes(info.bytes)}) the first time you press Listen.`;
+}
+
+function loadVoice() {
+  if (voice) return Promise.resolve(voice);
+  voiceLoading ??= (async () => {
+    const o = await getOrt();
+    const fresh = !(await isCached(voiceInfo));
+    const [bytes, table] = await Promise.all([
+      fetchModelBytes(voiceInfo, (frac, total) => sayStatus(fresh
+        ? `Downloading the voice… ${Math.round(frac * 100)}% of ${fmtBytes(total)}` : "Loading the voice…")),
+      fetchCheckedJSON(voiceInfo, voiceInfo.table, "voice settings"),
+    ]);
+    sayStatus("Preparing the voice…");
+    const s = await o.InferenceSession.create(bytes, { executionProviders: ["wasm"], graphOptimizationLevel: "all" });
+    voice = createVoice(o, s, table);
+    ui.voiceSize.textContent = "It is saved on this device.";
+    return voice;
+  })().catch((e) => { voiceLoading = null; throw e; });
+  return voiceLoading;
+}
+
+// Reads sentence by sentence, queueing each on the audio clock as soon as it is made, so
+// the first one plays while the rest are still being made.
+async function speak(text) {
+  stopSpeaking();
+  const parts = sentences(text);
+  if (!parts.length) return sayStatus("Type some Kreol first.");
+  // Created before any await, so Safari counts it as started by the tap.
+  const run = { ctx: new AudioContext(), audio: [], stopped: false };
+  playing = run;
+  spoken = null;
+  ui.saveWav.hidden = true;
+  updateSpeak();
+  try {
+    const v = await loadVoice();
+    const rate = +(document.querySelector("input[name=rate]:checked")?.value || 1);
+    const t0 = performance.now();
+    let at = 0, seconds = 0;
+    for (const [i, p] of parts.entries()) {
+      if (run.stopped) return;
+      sayStatus(parts.length > 1 ? `Reading part ${i + 1} of ${parts.length}…` : "Reading…");
+      // The CPU backend holds the page while it runs, so let the status paint first.
+      await new Promise((r) => setTimeout(r, 0));
+      const wav = await v.synth(p, rate);
+      if (run.stopped) return;
+      if (!wav) continue;
+      run.audio.push(wav);
+      const buf = run.ctx.createBuffer(1, wav.length, v.sampleRate);
+      buf.copyToChannel(wav, 0);
+      const src = run.ctx.createBufferSource();
+      src.buffer = buf;
+      src.connect(run.ctx.destination);
+      at = Math.max(at, run.ctx.currentTime + 0.05);
+      src.start(at);
+      at += buf.duration + PAUSE_S;
+      seconds += buf.duration;
+    }
+    if (!run.audio.length) {
+      stopSpeaking();
+      return sayStatus("Nothing to read: the voice only reads letters.");
+    }
+    run.sampleRate = v.sampleRate;
+    spoken = run;
+    ui.saveWav.hidden = false;
+    sayStatus(`${fmtTime(seconds)} of speech · made in ${((performance.now() - t0) / 1000).toFixed(1)} s on this device`);
+    setTimeout(() => { if (playing === run) stopSpeaking(); }, (at - run.ctx.currentTime) * 1000 + 100);
+  } catch (e) {
+    stopSpeaking();
+    ui.sayMeta.replaceChildren(span(`Couldn't read that aloud: ${e.message || e}`, "err"));
+    console.error(e);
+  }
+}
+
+function stopSpeaking() {
+  if (!playing) return;
+  playing.stopped = true;
+  playing.ctx.close().catch(() => {});
+  playing = null;
+  updateSpeak();
+}
+
+function updateSpeak() {
+  ui.speak.classList.toggle("on", !!playing);
+  ui.speakLabel.textContent = playing ? "Stop" : "Listen";
+  ui.speak.disabled = transcribing;
+}
+
+function sayStatus(text) { ui.sayMeta.textContent = text; }
+
+ui.speak.onclick = () => (playing ? stopSpeaking() : speak(ui.say.value));
+ui.listen.onclick = () => {
+  ui.say.value = ui.out.textContent;
+  speak(ui.say.value);
+};
+ui.saveWav.onclick = () => {
+  if (!spoken) return;
+  const sr = spoken.sampleRate, gap = Math.round(PAUSE_S * sr);
+  const all = new Float32Array(spoken.audio.reduce((n, a) => n + a.length + gap, 0));
+  let o = 0;
+  for (const a of spoken.audio) { all.set(a, o); o += a.length + gap; }
+  const url = URL.createObjectURL(wavBlob(all, sr));
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "koze-kreol.wav";
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 10000);
+};
 
 // ------------------------------------------------------------------ recording
 
