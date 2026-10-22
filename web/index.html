@@ -20,12 +20,16 @@
       <span class="brand-mark"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M4 10v4M8 6v12M12 3v18M16 7v10M20 10v4"/></svg></span>
       koze
     </div>
-    <div class="pill" id="pill" data-state="busy"><span class="dot"></span><span id="status">Checking…</span></div>
+    <div class="nav-right">
+      <div class="pill" id="pill" data-state="busy"><span class="dot"></span><span id="status">Checking…</span></div>
+      <button class="btn btn-ghost nav-btn" id="signInBtn" hidden>Sign in</button>
+      <button class="avatar" id="accountBtn" aria-label="Your account" hidden></button>
+    </div>
   </nav>
 
   <header>
     <h1>Speak Kreol.<br><em>See it written.</em></h1>
-    <p class="lede">Kreol Morisien speech to text that runs entirely on your device. Your voice never leaves it.</p>
+    <p class="lede">Kreol Morisien speech to text that runs entirely on your device. Your voice stays there unless you choose to share a clip.</p>
     <div class="badges"><span class="badge">On-device</span><span class="badge">Private</span><span class="badge">Works offline after setup</span></div>
   </header>
 
@@ -78,6 +82,69 @@
       </div>
       <p id="out" aria-live="polite"></p>
       <div id="meta"></div>
+
+      <div class="invite" id="invite" hidden>
+        <p><b>Speak Kreol well?</b> Sign in to correct transcripts like this one and share them. Each correction teaches the model.</p>
+        <button type="button" class="btn" id="inviteBtn">Sign in to help</button>
+      </div>
+
+      <form class="contrib" id="contrib" hidden>
+        <div class="c-head">
+          <span class="label">Help teach it Kreol</span>
+          <span class="c-note">Optional. Nothing is sent until you press Share.</span>
+        </div>
+        <audio id="clipAudio" controls preload="metadata"></audio>
+
+        <label class="field" for="fix">What was actually said?</label>
+        <textarea id="fix" rows="3" spellcheck="false" autocomplete="off" autocapitalize="off"></textarea>
+        <div class="hint">Fix the words the model got wrong. Use Grafi Larmoni spelling if you know it; otherwise write it the way it sounds.
+          <button type="button" class="link" id="resetFix">Undo my edits</button></div>
+        <label class="check"><input type="checkbox" id="larmoni"> I used the standard spelling (Grafi Larmoni)</label>
+
+        <fieldset>
+          <legend class="field">How good was the transcript?</legend>
+          <div class="seg" id="rating">
+            <label><input type="radio" name="rating" value="3"><span>Good</span></label>
+            <label><input type="radio" name="rating" value="2"><span>Some mistakes</span></label>
+            <label><input type="radio" name="rating" value="1"><span>Mostly wrong</span></label>
+          </div>
+        </fieldset>
+        <fieldset id="issuesWrap" hidden>
+          <legend class="field">What went wrong? <span class="opt">Pick any</span></legend>
+          <div class="chips" id="issues">
+            <label><input type="checkbox" value="words"><span>Wrong words</span></label>
+            <label><input type="checkbox" value="spelling"><span>Spelling</span></label>
+            <label><input type="checkbox" value="names"><span>Names or places</span></label>
+            <label><input type="checkbox" value="numbers"><span>Numbers</span></label>
+            <label><input type="checkbox" value="mixed"><span>French or English words</span></label>
+            <label><input type="checkbox" value="missing"><span>Missed words</span></label>
+            <label><input type="checkbox" value="extra"><span>Added words</span></label>
+            <label><input type="checkbox" value="noise"><span>Background noise</span></label>
+          </div>
+        </fieldset>
+        <fieldset>
+          <legend class="field">Languages spoken</legend>
+          <div class="chips" id="languages">
+            <label><input type="checkbox" value="kreol" checked><span>Kreol</span></label>
+            <label><input type="checkbox" value="french"><span>French</span></label>
+            <label><input type="checkbox" value="english"><span>English</span></label>
+            <label><input type="checkbox" value="bhojpuri"><span>Bhojpuri</span></label>
+            <label><input type="checkbox" value="other"><span>Other</span></label>
+          </div>
+        </fieldset>
+        <label class="field" for="comment">Anything else? <span class="opt">Optional</span></label>
+        <textarea id="comment" rows="2" maxlength="2000"></textarea>
+
+        <div id="uploadChecks" hidden>
+          <label class="check"><input type="checkbox" id="permission"> Everyone who speaks in this audio agreed to share it</label>
+          <label class="check"><input type="checkbox" id="ownVoice"> I'm one of the speakers (attach my optional details)</label>
+        </div>
+
+        <div class="c-actions">
+          <button type="submit" class="btn btn-primary" id="share">Share this clip</button>
+        </div>
+        <div class="c-status" id="shareStatus" aria-live="polite"></div>
+      </form>
     </section>
 
     <section class="card history">
@@ -94,6 +161,80 @@
     running in your browser.<br>
     <a href="https://github.com/tanwasp/koze">Source on GitHub</a>
   </footer>
+  <dialog id="signin">
+    <div class="consent">
+      <h2>Sign in to help</h2>
+      <p>No password. We'll email you a code. New here? The same code makes your account.</p>
+      <form id="emailForm" class="stack">
+        <label class="field" for="email">Email</label>
+        <input id="email" type="email" autocomplete="email" inputmode="email" required maxlength="254">
+        <div class="c-actions"><button class="btn btn-primary" id="sendCode">Email me a code</button>
+          <button type="button" class="btn btn-ghost" data-close>Cancel</button></div>
+      </form>
+      <form id="codeForm" class="stack" hidden>
+        <label class="field" for="code">Code sent to <span id="codeEmail"></span></label>
+        <input id="code" type="text" autocomplete="one-time-code" inputmode="numeric" pattern="[0-9]{6,10}" maxlength="10" required>
+        <div class="c-actions"><button class="btn btn-primary">Sign in</button>
+          <button type="button" class="btn btn-ghost" id="resend">Send a new code</button>
+          <button type="button" class="btn btn-ghost" id="otherEmail">Use another email</button></div>
+      </form>
+      <div class="c-status" id="signinStatus" aria-live="polite"></div>
+    </div>
+  </dialog>
+
+  <dialog id="account">
+    <div class="consent">
+      <div class="acct-head"><h2>Your account</h2><span class="tag tag-have" id="roleTag" hidden></span></div>
+      <p id="acctEmail"></p>
+      <div class="stats" id="stats"></div>
+      <form id="nameForm" class="row">
+        <label class="field" for="displayName">Name shown to the Koze team <span class="opt">Optional</span></label>
+        <div class="row-in"><input id="displayName" maxlength="60" autocomplete="nickname"><button class="btn">Save</button></div>
+      </form>
+      <h3>Your clips</h3>
+      <ul id="myClips"></ul>
+      <div class="c-actions">
+        <button type="button" class="btn" id="editConsent">Consent and details</button>
+        <button type="button" class="btn" id="signOut">Sign out</button>
+        <button type="button" class="btn btn-ghost" data-close>Close</button>
+      </div>
+      <button type="button" class="link danger" id="deleteAccount">Delete my account and all my clips</button>
+      <div class="c-status" id="acctStatus" aria-live="polite"></div>
+    </div>
+  </dialog>
+
+  <dialog id="consent">
+    <form method="dialog" class="consent" id="consentForm">
+      <h2>Share clips to help build Kreol speech recognition</h2>
+      <p>Very little Kreol Morisien speech has been written down, which is why speech models struggle with it. Each clip you share, with your corrected transcript, helps fix that.</p>
+      <dl>
+        <dt>What's sent</dt>
+        <dd>Only the clips you choose to share: the audio, the model's transcript, your correction, your feedback, and any details below. Your email is kept with your account so you can sign in, and is never published.</dd>
+        <dt>How it's used</dt>
+        <dd>To train and test the Koze speech models.</dd>
+        <dt>Where it's kept</dt>
+        <dd>In a private Supabase database that only the Koze maintainer can read.</dd>
+        <dt>Changing your mind</dt>
+        <dd>Delete any clip, or your whole account and every clip in it, from your account page at any time. A clip can't be recalled from public datasets that were already downloaded.</dd>
+      </dl>
+      <label class="check"><input type="checkbox" id="cAge" required> I'm 18 or older</label>
+      <label class="check"><input type="checkbox" id="cAgree" required> I agree to share the clips I choose, as described above</label>
+      <label class="check"><input type="checkbox" id="cOpen"> Also let my clips be published in an open dataset (CC BY 4.0) that anyone can use for research and products</label>
+
+      <h3>About you <span class="opt">Optional, helps check the model works for everyone</span></h3>
+      <div class="grid">
+        <label>Age<select id="sAge"><option value="">Prefer not to say</option><option>18-24</option><option>25-34</option><option>35-44</option><option>45-54</option><option>55-64</option><option>65+</option></select></label>
+        <label>Gender<select id="sGender"><option value="">Prefer not to say</option><option value="female">Female</option><option value="male">Male</option><option value="other">Another gender</option></select></label>
+        <label>Where you grew up<select id="sRegion"><option value="">Prefer not to say</option><option>Port Louis</option><option>Pamplemousses</option><option>Rivière du Rempart</option><option>Flacq</option><option>Grand Port</option><option>Savanne</option><option>Black River</option><option>Plaines Wilhems</option><option>Moka</option><option>Rodrigues</option><option value="abroad">Outside Mauritius</option></select></label>
+        <label>First language<select id="sFirst"><option value="">Prefer not to say</option><option value="kreol">Kreol</option><option value="french">French</option><option value="english">English</option><option value="bhojpuri">Bhojpuri</option><option value="other">Other</option></select></label>
+      </div>
+      <div class="c-actions">
+        <button class="btn btn-primary" id="consentOk" value="ok">Save and share</button>
+        <button class="btn btn-ghost" value="cancel" formnovalidate>Cancel</button>
+        <button class="btn btn-ghost danger" id="consentRevoke" value="revoke" formnovalidate hidden>Stop sharing</button>
+      </div>
+    </form>
+  </dialog>
 </div>
 <script type="module" src="app.js"></script>
 </body>
