@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Koze</title>
+<meta name="description" content="Kreol Morisien speech to text that runs entirely in your browser.">
+<style>
+  :root {
+    --bg: #faf8f5; --fg: #1d1b18; --muted: #6b665e; --line: #e4dfd7; --card: #ffffff;
+    --accent: #c2410c; --accent-fg: #ffffff; --ok: #15803d; --err: #b91c1c;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #161513; --fg: #f1ede6; --muted: #a39d93; --line: #2f2c28; --card: #1f1d1a;
+            --accent: #f97316; --accent-fg: #1d1b18; --ok: #4ade80; --err: #f87171; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg);
+         font: 16px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 680px; margin: 0 auto; padding: 32px 16px 64px; }
+  h1 { font-size: 28px; margin: 0 0 4px; letter-spacing: -0.01em; }
+  .sub { color: var(--muted); margin: 0 0 24px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 20px; margin-bottom: 16px; }
+  .status { display: flex; gap: 12px; align-items: center; justify-content: space-between; flex-wrap: wrap; }
+  .status p { margin: 0; }
+  .bar { height: 6px; background: var(--line); border-radius: 3px; overflow: hidden; margin-top: 12px; display: none; }
+  .bar > div { height: 100%; width: 0; background: var(--accent); transition: width .2s; }
+  button { font: inherit; border: 1px solid var(--line); background: var(--card); color: var(--fg);
+           border-radius: 10px; padding: 8px 14px; cursor: pointer; }
+  button.primary { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); font-weight: 600; }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  .rec { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 12px 0; }
+  #mic { width: 112px; height: 112px; border-radius: 50%; font-size: 15px; font-weight: 600;
+         background: var(--accent); color: var(--accent-fg); border: none; }
+  #mic.on { animation: pulse 1.2s ease-in-out infinite; }
+  @keyframes pulse { 50% { transform: scale(1.06); opacity: .85; } }
+  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; justify-content: center; color: var(--muted); font-size: 14px; }
+  #out { white-space: pre-wrap; min-height: 3em; font-size: 18px; margin: 0; }
+  .meta { color: var(--muted); font-size: 13px; margin-top: 8px; }
+  .err { color: var(--err); }
+  .ok { color: var(--ok); }
+  #history { list-style: none; padding: 0; margin: 0; }
+  #history li { border-top: 1px solid var(--line); padding: 10px 0; }
+  #history small { color: var(--muted); display: block; }
+  details summary { cursor: pointer; color: var(--muted); }
+  footer { color: var(--muted); font-size: 13px; }
+  a { color: var(--accent); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Koze</h1>
+  <p class="sub">Kreol Morisien speech to text. The model runs on your device, so your audio never leaves it.</p>
+
+  <section class="card">
+    <div class="status">
+      <p id="status">Checking for the model…</p>
+      <button id="download" class="primary" hidden>Download model</button>
+    </div>
+    <div class="bar" id="bar"><div></div></div>
+  </section>
+
+  <section class="card">
+    <div class="rec">
+      <button id="mic" disabled>Tap to talk</button>
+      <div class="row">
+        <span id="timer">0:00</span>
+        <span>·</span>
+        <label><button id="pick" disabled>Upload audio</button><input id="file" type="file" accept="audio/*,.ogg,.opus,.m4a" hidden></label>
+      </div>
+    </div>
+  </section>
+
+  <section class="card">
+    <p id="out" aria-live="polite"></p>
+    <div class="meta" id="meta"></div>
+    <div class="row" style="justify-content:flex-start;margin-top:12px">
+      <button id="copy" disabled>Copy</button>
+    </div>
+  </section>
+
+  <section class="card">
+    <details>
+      <summary>Earlier transcripts on this device</summary>
+      <ul id="history"></ul>
+    </details>
+  </section>
+
+  <footer>
+    <p>Model: Meta <a href="https://github.com/facebookresearch/omnilingual-asr">Omnilingual ASR</a>
+      <span id="card"></span>, converted to run in the browser (Apache 2.0). Source:
+      <a href="https://github.com/tanwasp/koze">tanwasp/koze</a>.</p>
+  </footer>
+</main>
+<script type="module" src="app.js"></script>
+</body>
+</html>

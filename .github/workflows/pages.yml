@@ -1,0 +1,73 @@
+name: Build and deploy web app
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARD: omniASR_CTC_300M_v2
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install system audio library
+        run: sudo apt-get update -q && sudo apt-get install -y -q libsndfile1
+
+      # fairseq2n refuses a CPU-only torch, so this pulls the default CUDA build (about 4 GB).
+      - name: Free disk space
+        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL && df -h /
+
+      - name: Install Python packages
+        run: pip install -q -r tools/requirements-export.txt
+
+      - name: Restore converted model
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: build/model
+          key: onnx-${{ env.CARD }}-${{ hashFiles('tools/export_onnx.py', 'tools/requirements-export.txt') }}
+
+      - name: Convert to ONNX
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: python tools/export_onnx.py --card "$CARD" --out build/model --check
+
+      - name: Check against Meta's pipeline on Kreol speech
+        run: python tools/verify_onnx.py --card "$CARD" --model-dir build/model --report build/report.json
+
+      - name: Assemble site
+        run: python tools/build_site.py --model-dir build/model --report build/report.json --out site
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    if: github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

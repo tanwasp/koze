@@ -1,0 +1,13 @@
+# Conversion and verification (CI).
+omnilingual-asr==0.2.0
+# fairseq2n pins torch 2.8.0; torchaudio must match or it fails to load.
+torch==2.8.0
+torchaudio==2.8.0
+# fairseq2 needs numpy<2; newer pyarrow needs numpy>=2.
+pyarrow>=20,<21
+onnx==1.23.2
+onnxruntime==1.31.0
+onnxscript==0.7.2
+transformers>=4.40,<5
+jiwer==4.0.0
+soundfile>=0.12

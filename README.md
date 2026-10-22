@@ -4,7 +4,12 @@ A transcription tool for Mauritian Creole (Kreol Morisien) audio. *Koze* is Kreo
 
 ## Status
 
-Planning. Nothing is implemented yet.
+- **Web app** (`web/`): tap to talk, get a Kreol transcript. Meta's Omnilingual ASR CTC 300M model runs in the browser, on WebGPU when available and otherwise on WebAssembly. The model downloads once (about 350 MB) and is cached. Audio never leaves the device. It is deployed to GitHub Pages by `.github/workflows/pages.yml`.
+- **Model harness** (`harness/`): a Python/Gradio app that compares every Omnilingual ASR model and size, scores against reference transcripts, and logs runs. It runs on Colab or a Mac.
+
+### How the web model is made
+
+`tools/export_onnx.py` converts the CTC model to ONNX and makes 8-bit copies. `tools/verify_onnx.py` checks them against Meta's PyTorch pipeline on synthesised Kreol speech: the fp32 graph must match it, and the 8-bit file that ships must change at most 3% of characters. `tools/build_site.py` splits the chosen file into 40 MB parts for Pages. CI runs all three on every PR and deploys on `main`. The check results appear in the job summary.
 
 ## Approach (draft)
 
