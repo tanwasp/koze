@@ -17,7 +17,7 @@ cd harness
 ./run_local.sh --mock         # UI only, no models (instant)
 ```
 
-On a Mac, the script installs Homebrew's `python@3.12` and `libsndfile` if they're missing. Python 3.13 isn't supported by Meta's package.
+On a Mac, the script installs Homebrew's `python@3.11` and `libsndfile` if they're missing. Use Python 3.11: Meta's package declares `<=3.12`, which pip reads as excluding 3.12.1 and later.
 
 ## Which models to try
 
@@ -46,7 +46,7 @@ Start with **CTC 300M + LLM 1B**.
 
 - WER here uses only light normalisation: lowercase, punctuation stripped, apostrophes unified. Kreol spelling variants count as errors. For real numbers, use the eval repo's normalisation tables.
 - The Apple GPU (MPS) path is untested. If a model fails there, the app retries it on the CPU automatically.
-- Built against `omnilingual-asr==0.2.0` (Python 3.10 to 3.12).
+- Built against `omnilingual-asr==0.2.0` (Python 3.10 or 3.11).
 
 ## Files
 
