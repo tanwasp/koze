@@ -5,6 +5,7 @@ A transcription tool for Mauritian Creole (Kreol Morisien) audio. *Koze* is Kreo
 ## Status
 
 - **Web app** (`web/`): tap to talk, get a Kreol transcript. Meta's Omnilingual ASR CTC models run in the browser, on WebGPU when available and otherwise on WebAssembly. There are two sizes: 300M (about 350 MB, hosted with the site) and 1B (about 1 GB, hosted on Hugging Face because GitHub Pages caps a site at 1 GB). The page recommends a size from what the browser reveals and a speed check, downloads the model once and caches it. Audio never leaves the device. It is deployed to GitHub Pages by `.github/workflows/pages.yml`.
+- **Read aloud** (same page): type Kreol, or press Listen on a transcript, and hear it spoken. This uses Meta's MMS Kreol text-to-speech model ([facebook/mms-tts-mfe](https://huggingface.co/facebook/mms-tts-mfe), VITS, about 36M parameters), also in the browser. It downloads (about 140 MB) only the first time someone presses Listen. **Its licence is CC BY-NC 4.0, so the voice is for non-commercial use only**; the page says so. The speech recognition models are Apache 2.0.
 - **Model harness** (`harness/`): a Python/Gradio app that compares every Omnilingual ASR model and size, scores against reference transcripts, and logs runs. It runs on Colab or a Mac.
 
 ### How the web model is made
@@ -12,6 +13,10 @@ A transcription tool for Mauritian Creole (Kreol Morisien) audio. *Koze* is Kreo
 `tools/export_onnx.py` converts a CTC model to ONNX and makes 8-bit copies. `tools/verify_onnx.py` checks them against Meta's PyTorch pipeline on synthesised Kreol speech: the fp32 graph must match it, and the 8-bit file that ships must change at most 3% of characters. `tools/build_site.py pack` splits the chosen file into 40 MB parts with a SHA-256 for each, and `build_site.py site` assembles the site. CI runs all of this on every PR and deploys on `main`. The check results appear in the job summary.
 
 The 1B model has its own job, which runs once the repository has an `HF_REPO` variable (for example `tanwasp/koze-models`) and an `HF_TOKEN` secret with write access to that repo, both under *Settings > Secrets and variables > Actions*. It converts and checks the model the same way and uploads the parts with `tools/publish_hf.py`.
+
+### How the voice is made
+
+`tools/export_tts.py` exports the MMS VITS model to ONNX with the sampling settings (noise scales and speaking rate) as inputs, so the page can offer a slower speed. It checks that with the randomness off the ONNX graph reproduces PyTorch, that the speed input works, and that the speech recogniser the site ships understands what the voice says (mean character error rate at most 25%). It also writes the Hugging Face tokenizer's output for a set of texts, and `tools/check_tts_tokenizer.mjs` checks that `web/tts.js` produces the same token ids. `build_site.py pack-tts` splits it into hashed parts like the ASR model, listed under `tts` in `models.json`. The page reads sentence by sentence and starts playing the first while the rest are made. The voice reads letters only (no digits), and a letter the model lacks is tried without its accent.
 
 ### Choosing a size
 

@@ -184,11 +184,30 @@ footer a { color: var(--fg-2); text-decoration: none; border-bottom: 1px solid v
 .model-chip .change { color: var(--accent-b); font-weight: 500; }
 .model-chip .sep { opacity: .6; }
 
+.t-actions { display: flex; gap: 2px; }
+.speak { padding: 22px 24px; margin-bottom: 16px; }
+#say { width: 100%; font: inherit; font-size: 18px; line-height: 1.5; color: var(--fg); background: var(--surface-2);
+  border: 1px solid var(--border); border-radius: 16px; padding: 12px 14px; resize: vertical; min-height: 5.5em; }
+#say::placeholder { color: var(--fg-3); font-family: "Instrument Serif", Georgia, serif; font-style: italic; }
+#say:focus { outline: none; border-color: color-mix(in srgb, var(--accent-a) 60%, transparent); }
+.say-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+#speak .i-stop { display: none; }
+#speak.on .i-play { display: none; }
+#speak.on .i-stop { display: block; }
+#sayMeta { margin-top: 10px; font-size: 13px; color: var(--fg-3); min-height: 1.2em; }
+.fine { margin: 10px 0 0; font-size: 12px; color: var(--fg-3); line-height: 1.6; }
+.fine a { color: var(--fg-2); text-decoration: none; border-bottom: 1px solid var(--border-strong); }
+.seg { display: inline-flex; padding: 3px; border-radius: 999px; border: 1px solid var(--border); background: var(--surface-2); }
+.seg label { position: relative; font-size: 12.5px; padding: 4px 12px; border-radius: 999px; cursor: pointer; color: var(--fg-2); }
+.seg input { position: absolute; opacity: 0; pointer-events: none; }
+.seg label:has(input:checked) { background: var(--surface); color: var(--fg); box-shadow: 0 0 0 1px var(--border-strong) inset; }
+.seg label:has(input:focus-visible) { outline: 2px solid var(--accent-b); outline-offset: 1px; }
+
 [hidden] { display: none !important; }
 @media (max-width: 480px) {
   nav { padding-bottom: 28px; }
   .stage { padding: 28px 16px 22px; }
-  .transcript { padding: 18px; }
+  .transcript, .speak { padding: 18px; }
   #out { font-size: 19px; }
 }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }

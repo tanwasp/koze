@@ -115,6 +115,14 @@ jobs:
       - name: Check against Meta's pipeline on Kreol speech
         run: python tools/verify_onnx.py --card "$CARD" --model-dir build/model --report build/report.json
 
+      # Meta's MMS Kreol voice for "Read aloud". The check also runs its output through
+      # the speech recogniser above, so a broken export can't sound like noise unnoticed.
+      - name: Convert text-to-speech model and check it
+        run: python tools/export_tts.py --out build/tts --asr-dir build/model --asr-report build/report.json
+
+      - name: Check the page's tokenizer against Hugging Face's
+        run: node tools/check_tts_tokenizer.mjs build/tts
+
       - name: Get the 1B manifest
         if: needs.large.result == 'success'
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
@@ -127,11 +135,12 @@ jobs:
           HF_REPO: ${{ vars.HF_REPO }}
         run: |
           python tools/build_site.py pack --model-dir build/model --report build/report.json --out build/pack
+          python tools/build_site.py pack-tts --model-dir build/tts --out build/tts-pack
           remote=()
           if [ -f build/large-manifest/manifest.json ]; then
             remote=(--remote "build/large-manifest/manifest.json=https://huggingface.co/$HF_REPO/resolve/main/$LARGE_CARD/")
           fi
-          python tools/build_site.py site --local build/pack "${remote[@]}" --out site
+          python tools/build_site.py site --local build/pack "${remote[@]}" --tts build/tts-pack --out site
 
       - uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3
         with:

@@ -4,8 +4,12 @@ model registry (web/models.json) with a SHA-256 for every model part.
     # pack one converted model into parts + manifest.json (also used for the Hugging Face upload)
     python tools/build_site.py pack --model-dir build/model --report build/report.json --out site/model
 
+    # pack the text-to-speech model written by tools/export_tts.py
+    python tools/build_site.py pack-tts --model-dir build/tts --out build/tts-pack
+
     # build the site; --remote adds a model whose parts live elsewhere, pinned by its manifest
-    python tools/build_site.py site --local site-model-dir --remote build/1b/manifest.json=https://huggingface.co/... --out site
+    python tools/build_site.py site --local site-model-dir --remote build/1b/manifest.json=https://huggingface.co/... \
+        --tts build/tts-pack --out site
 
 The page trusts models.json (served from this site) and checks every downloaded part
 against it, so a model host can't swap in a different file.
@@ -65,11 +69,8 @@ def sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def pack(model_dir: Path, report_path: Path, out: Path) -> dict:
-    """Split the shipped model into parts and write manifest.json next to them.
-    Paths in the manifest are relative to the manifest."""
-    report = json.loads(report_path.read_text())
-    data = (model_dir / report["ship"]).read_bytes()
+def split(data: bytes, out: Path) -> list[dict]:
+    """Write data to out in PART_BYTES parts named after its hash."""
     digest = sha256(data)
     out.mkdir(parents=True, exist_ok=True)
     parts = []
@@ -78,6 +79,16 @@ def pack(model_dir: Path, report_path: Path, out: Path) -> dict:
         name = f"{digest[:12]}.part{i // PART_BYTES:02d}"
         (out / name).write_bytes(chunk)
         parts.append({"path": name, "bytes": len(chunk), "sha256": sha256(chunk)})
+    return parts
+
+
+def pack(model_dir: Path, report_path: Path, out: Path) -> dict:
+    """Split the shipped model into parts and write manifest.json next to them.
+    Paths in the manifest are relative to the manifest."""
+    report = json.loads(report_path.read_text())
+    data = (model_dir / report["ship"]).read_bytes()
+    digest = sha256(data)
+    parts = split(data, out)
     vocab = (model_dir / "vocab.json").read_bytes()
     (out / "vocab.json").write_bytes(vocab)
     manifest = {
@@ -88,6 +99,24 @@ def pack(model_dir: Path, report_path: Path, out: Path) -> dict:
         "parts": parts,
         "vocab": {"path": "vocab.json", "sha256": sha256(vocab)},
         "check": report["summary"],
+    }
+    (out / "manifest.json").write_text(json.dumps(manifest, indent=1))
+    return manifest
+
+
+def pack_tts(model_dir: Path, out: Path) -> dict:
+    """Same layout as pack(), for the text-to-speech model and its tokenizer table."""
+    data = (model_dir / "tts.onnx").read_bytes()
+    parts = split(data, out)
+    table = (model_dir / "tts.json").read_bytes()
+    (out / "tts.json").write_bytes(table)
+    manifest = {
+        "card": json.loads(table)["model"],
+        "licence": json.loads(table)["licence"],
+        "bytes": len(data),
+        "sha256": sha256(data),
+        "parts": parts,
+        "table": {"path": "tts.json", "sha256": sha256(table)},
     }
     (out / "manifest.json").write_text(json.dumps(manifest, indent=1))
     return manifest
@@ -122,14 +151,22 @@ def model_entry(manifest: dict, base: str) -> dict:
         k: manifest[k] for k in ("bytes", "sha256", "parts", "vocab")}
 
 
-def build_site(local: list[Path], remote: list[str], out: Path, cache: Path) -> None:
+def build_site(local: list[Path], remote: list[str], tts: Path | None, out: Path, cache: Path) -> None:
     staged = {}
-    for d in local:  # copy before wiping out, in case a local model dir lives inside it
+    for d in local + ([tts] if tts else []):  # copy before wiping out, in case a model dir lives inside it
         staged[d] = (json.loads((d / "manifest.json").read_text()), {p.name: p.read_bytes() for p in d.iterdir()})
     if out.exists():
         shutil.rmtree(out)
     shutil.copytree(ROOT / "web", out)
     vendor(out, cache)
+
+    voice = None
+    if tts:
+        manifest, files = staged.pop(tts)
+        (out / "tts").mkdir()
+        for name, data in files.items():
+            (out / "tts" / name).write_bytes(data)
+        voice = {"base": "tts/"} | {k: manifest[k] for k in ("card", "licence", "bytes", "sha256", "parts", "table")}
 
     models = []
     for i, (manifest, files) in enumerate(staged.values()):
@@ -143,10 +180,12 @@ def build_site(local: list[Path], remote: list[str], out: Path, cache: Path) -> 
         path, base = r.split("=", 1)
         models.append(model_entry(json.loads(Path(path).read_text()), base.rstrip("/") + "/"))
     models.sort(key=lambda m: m["bytes"])
-    (out / "models.json").write_text(json.dumps({"models": models}, indent=1))
+    (out / "models.json").write_text(json.dumps({"models": models} | ({"tts": voice} if voice else {}), indent=1))
     (out / ".nojekyll").write_text("")
     print(json.dumps([{k: m[k] for k in ("id", "card", "bytes", "base")} | {"parts": len(m["parts"])}
                       for m in models], indent=1))
+    if voice:
+        print(f"text to speech: {voice['card']}, {voice['bytes']} bytes in {len(voice['parts'])} parts")
 
 
 def main() -> None:
@@ -156,17 +195,24 @@ def main() -> None:
     pk.add_argument("--model-dir", required=True)
     pk.add_argument("--report", required=True)
     pk.add_argument("--out", required=True)
+    pt = sub.add_parser("pack-tts")
+    pt.add_argument("--model-dir", required=True)
+    pt.add_argument("--out", required=True)
     st = sub.add_parser("site")
     st.add_argument("--local", action="append", default=[], help="a directory written by `pack`")
     st.add_argument("--remote", action="append", default=[], help="MANIFEST_PATH=BASE_URL")
+    st.add_argument("--tts", help="a directory written by `pack-tts`")
     st.add_argument("--out", required=True)
     st.add_argument("--cache", default="build/vendor")
     a = p.parse_args()
     if a.cmd == "pack":
         m = pack(Path(a.model_dir), Path(a.report), Path(a.out))
         print(json.dumps({k: v for k, v in m.items() if k != "parts"} | {"parts": len(m["parts"])}, indent=1))
+    elif a.cmd == "pack-tts":
+        m = pack_tts(Path(a.model_dir), Path(a.out))
+        print(json.dumps({k: v for k, v in m.items() if k != "parts"} | {"parts": len(m["parts"])}, indent=1))
     else:
-        build_site([Path(d) for d in a.local], a.remote, Path(a.out), Path(a.cache))
+        build_site([Path(d) for d in a.local], a.remote, Path(a.tts) if a.tts else None, Path(a.out), Path(a.cache))
 
 
 if __name__ == "__main__":

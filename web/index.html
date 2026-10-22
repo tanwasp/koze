@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Koze</title>
-<meta name="description" content="Kreol Morisien speech to text that runs entirely on your device.">
+<meta name="description" content="Kreol Morisien speech to text, and Kreol read aloud, running entirely on your device.">
 <meta name="theme-color" content="#0a0a0c" media="(prefers-color-scheme: dark)">
 <meta name="theme-color" content="#f7f5f2" media="(prefers-color-scheme: light)">
 <!-- Only this site's own scripts, styles and fonts; network access only to this site and the model host. -->
@@ -25,7 +25,7 @@
 
   <header>
     <h1>Speak Kreol.<br><em>See it written.</em></h1>
-    <p class="lede">Kreol Morisien speech to text that runs entirely on your device. Your voice never leaves it.</p>
+    <p class="lede">Kreol Morisien speech to text, and Kreol text read aloud, running entirely on your device. Your voice never leaves it.</p>
     <div class="badges"><span class="badge">On-device</span><span class="badge">Private</span><span class="badge">Works offline after setup</span></div>
   </header>
 
@@ -71,13 +71,45 @@
     <section class="card transcript">
       <div class="t-head">
         <span class="label">Transcript</span>
+        <div class="t-actions">
+        <button class="btn btn-ghost" id="listen" disabled hidden>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5L6 9H3v6h3l5 4V5z"/><path d="M15.5 8.5a5 5 0 0 1 0 7M18.5 5.5a9 9 0 0 1 0 13"/></svg>
+          Listen
+        </button>
         <button class="btn btn-ghost" id="copy" disabled>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2.5"/><path d="M5 15V6a2 2 0 0 1 2-2h9"/></svg>
           <span id="copyLabel">Copy</span>
         </button>
+        </div>
       </div>
       <p id="out" aria-live="polite"></p>
       <div id="meta"></div>
+    </section>
+
+    <section class="card speak" id="speakCard" hidden>
+      <div class="t-head">
+        <label class="label" for="say">Read aloud</label>
+        <div class="seg" role="radiogroup" aria-label="Speed">
+          <label><input type="radio" name="rate" value="0.75">Slow</label>
+          <label><input type="radio" name="rate" value="1" checked>Normal</label>
+        </div>
+      </div>
+      <textarea id="say" rows="3" maxlength="3000" spellcheck="false" placeholder="Type or paste Kreol here, or press Listen on a transcript."></textarea>
+      <div class="say-row">
+        <button class="btn btn-primary" id="speak">
+          <svg class="i-play" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.5v13a1 1 0 0 0 1.5.86l10.5-6.5a1 1 0 0 0 0-1.72L9.5 4.64A1 1 0 0 0 8 5.5z"/></svg>
+          <svg class="i-stop" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2.5"/></svg>
+          <span id="speakLabel">Listen</span>
+        </button>
+        <button class="btn btn-ghost" id="saveWav" hidden>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12m0 0l-4-4m4 4l4-4M5 21h14"/></svg>
+          Save audio
+        </button>
+      </div>
+      <div id="sayMeta" aria-live="polite"></div>
+      <p class="fine">The voice is Meta's <a href="https://huggingface.co/facebook/mms-tts-mfe">MMS Kreol text-to-speech model</a>, licensed
+        <a href="https://creativecommons.org/licenses/by-nc/4.0/">CC BY-NC 4.0</a>: free for non-commercial use only.
+        <span id="voiceSize"></span> It reads letters only, so write numbers as words.</p>
     </section>
 
     <section class="card history">
@@ -92,6 +124,7 @@
   <footer>
     Powered by Meta <a href="https://github.com/facebookresearch/omnilingual-asr">Omnilingual ASR</a> <span id="card"></span>,
     running in your browser.<br>
+    <span id="voiceCredit" hidden>Voice by Meta <a href="https://huggingface.co/facebook/mms-tts-mfe">MMS-TTS</a> (CC BY-NC 4.0, non-commercial).<br></span>
     <a href="https://github.com/tanwasp/koze">Source on GitHub</a>
   </footer>
 </div>
