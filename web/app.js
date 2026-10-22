@@ -1,114 +1,159 @@
 // Koze: Kreol speech to text in the browser with onnxruntime-web.
-// The model is downloaded once in parts, kept in the Cache API, and run with
-// WebGPU when available, otherwise WebAssembly.
+// models.json (served from this site) lists the model sizes with a SHA-256 for every
+// part. Parts are downloaded once, checked against those hashes, kept in the Cache API,
+// and run with WebGPU when available, otherwise WebAssembly.
 
-const ORT_VERSION = "1.27.0";
-const ORT_BASE = `https://cdn.jsdelivr.net/npm/onnxruntime-web@${ORT_VERSION}/dist/`;
+const ORT_DIR = new URL("vendor/ort/", location.href).href;
 const SR = 16000;
 const MAX_CHUNK_S = 30;
 const HISTORY_KEY = "koze-history";
+const MODEL_KEY = "koze-model";
+const SPEED_KEY = "koze-speed";
+// Recommend a bigger model only if it would transcribe a minute of audio in under ~15 s.
+const MAX_RTF = 0.25;
 
 const $ = (id) => document.getElementById(id);
 const ui = {
-  pill: $("pill"), status: $("status"), stage: $("stage"), setup: $("setup"), setupText: $("setupText"),
+  pill: $("pill"), status: $("status"), stage: $("stage"), setup: $("setup"), setupTitle: $("setupTitle"),
+  setupText: $("setupText"), models: $("models"), device: $("device"), cancelPick: $("cancelPick"),
   download: $("download"), downloadLabel: $("downloadLabel"), bar: $("bar"), barLabel: $("barLabel"),
   mic: $("mic"), micLabel: $("micLabel"), timer: $("timer"), wave: $("wave"), pick: $("pick"), file: $("file"),
+  modelBtn: $("modelBtn"), modelName: $("modelName"), modelSpeed: $("modelSpeed"),
   out: $("out"), meta: $("meta"), copy: $("copy"), copyLabel: $("copyLabel"), history: $("history"),
 };
 
-let ort, session, vocab, manifest, backend;
+let ort, session, vocab, backend;
+let models = [], current = null, device = null, cached = {}, downloading = false;
 
 // ------------------------------------------------------------------ model
 
 async function init() {
   try {
-    manifest = await (await fetch("model/manifest.json", { cache: "no-cache" })).json();
+    models = (await (await fetch("models.json", { cache: "no-cache" })).json()).models;
+    if (!models.length) throw new Error("empty");
   } catch {
     return setStatus("No model published", "err");
   }
-  $("card").textContent = `(${manifest.card.replace(/_/g, " ")})`;
-  const mb = Math.round(manifest.bytes / 2 ** 20);
-  if (await isCached()) {
-    await loadModel();
-  } else {
-    setStatus("Not installed", "");
-    ui.setupText.textContent = `The speech model is ${mb} MB. It downloads once and then stays on this device.`;
-    ui.downloadLabel.textContent = `Download model · ${mb} MB`;
-    ui.setup.hidden = false;
-    ui.download.onclick = () => { ui.download.hidden = true; loadModel(); };
-  }
+  [device] = await Promise.all([detectDevice(), refreshCached()]);
+  const saved = models.find((m) => m.id === readJSON(MODEL_KEY));
+  const start = saved && cached[saved.id] ? saved : models.find((m) => cached[m.id]);
+  if (start) return loadModel(start);
+  showPicker();
 }
 
-async function openCache() {
-  return caches.open(`koze-model-${manifest.sha256.slice(0, 12)}`);
+async function refreshCached() {
+  await Promise.all(models.map(async (m) => (cached[m.id] = await isCached(m))));
 }
 
-async function isCached() {
+function cacheName(m) { return `koze-model-${m.sha256.slice(0, 12)}`; }
+function partUrl(m, path) { return new URL(m.base + path, location.href).href; }
+
+async function isCached(m) {
   try {
-    const cache = await openCache();
-    const hits = await Promise.all(manifest.parts.map((p) => cache.match(p)));
+    if (!(await caches.has(cacheName(m)))) return false;
+    const cache = await caches.open(cacheName(m));
+    const hits = await Promise.all(m.parts.map((p) => cache.match(partUrl(m, p.path))));
     return hits.every(Boolean);
   } catch {
     return false;
   }
 }
 
-async function fetchModelBytes() {
+async function sha256Hex(bytes) {
+  const d = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
+  return Array.from(d, (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+// Parts already in the cache were checked when they were stored. A part fresh from the
+// network must match the hash in models.json before it is used or cached.
+async function fetchModelBytes(m) {
   let cache = null;
-  try { cache = await openCache(); } catch { /* private mode: download without caching */ }
-  const buf = new Uint8Array(manifest.bytes);
+  try { cache = await caches.open(cacheName(m)); } catch { /* private mode: download without caching */ }
+  const buf = new Uint8Array(m.bytes);
   let offset = 0;
-  showBar(0);
-  for (const part of manifest.parts) {
-    let res = cache && (await cache.match(part));
-    if (!res) {
-      res = await fetch(part);
-      if (!res.ok) throw new Error(`Download failed for ${part} (${res.status})`);
-      if (cache) {
-        try { await cache.put(part, res.clone()); } catch { cache = null; }
-      }
+  showBar(0, m.bytes);
+  for (const part of m.parts) {
+    const url = partUrl(m, part.path);
+    const start = offset;
+    let res = cache && (await cache.match(url));
+    const fresh = !res;
+    if (fresh) {
+      res = await fetch(url, { credentials: "omit", referrerPolicy: "no-referrer" });
+      if (!res.ok) throw new Error(`Download failed for ${part.path} (${res.status})`);
     }
     const reader = res.body.getReader();
     for (;;) {
       const { done, value } = await reader.read();
       if (done) break;
+      if (offset + value.length > start + part.bytes) throw new Error(`${part.path} is larger than expected`);
       buf.set(value, offset);
       offset += value.length;
-      showBar(offset / manifest.bytes);
+      showBar(offset / m.bytes, m.bytes);
+    }
+    const bytes = buf.subarray(start, offset);
+    if (fresh) {
+      if (bytes.length !== part.bytes || (await sha256Hex(bytes)) !== part.sha256) {
+        throw new Error(`${part.path} failed its integrity check, so it was not used`);
+      }
+      if (cache) {
+        try { await cache.put(url, new Response(bytes.slice())); } catch { cache = null; }
+      }
     }
   }
-  if (offset !== manifest.bytes) throw new Error("Model download was incomplete. Reload to retry.");
+  if (offset !== m.bytes) throw new Error("Model download was incomplete. Reload to retry.");
   return buf;
 }
 
-async function loadModel() {
+async function fetchVocab(m) {
+  const bytes = new Uint8Array(await (await fetch(partUrl(m, m.vocab.path), { credentials: "omit" })).arrayBuffer());
+  if ((await sha256Hex(bytes)) !== m.vocab.sha256) throw new Error("The vocabulary file failed its integrity check");
+  const v = JSON.parse(new TextDecoder().decode(bytes));
+  return { pieces: v.pieces, control: new Set(v.control) };
+}
+
+async function loadModel(m) {
+  ui.mic.disabled = ui.pick.disabled = ui.modelBtn.disabled = true;
+  ui.setup.hidden = !!(cached[m.id] && !session);
   try {
-    ort = await import(`${ORT_BASE}ort.webgpu.min.mjs`);
-    ort.env.wasm.wasmPaths = ORT_BASE;
-    ort.env.wasm.numThreads = self.crossOriginIsolated ? Math.min(4, navigator.hardwareConcurrency || 1) : 1;
-    const [bytes, v] = await Promise.all([fetchModelBytes(), fetch(manifest.vocab).then((r) => r.json())]);
-    vocab = { pieces: v.pieces, control: new Set(v.control) };
+    downloading = !cached[m.id];
+    setStatus(downloading ? "Downloading…" : "Loading model…", "busy");
+    if (!ort) {
+      ort = await import(`${ORT_DIR}ort.webgpu.min.mjs`);
+      ort.env.wasm.wasmPaths = ORT_DIR;
+      ort.env.wasm.numThreads = self.crossOriginIsolated ? Math.min(4, navigator.hardwareConcurrency || 1) : 1;
+    }
+    const [bytes, v] = await Promise.all([fetchModelBytes(m), fetchVocab(m)]);
+    cached[m.id] = await isCached(m);
     setStatus("Preparing model…", "busy");
     if (!ui.setup.hidden) ui.barLabel.textContent = "Preparing the model…";
+    const old = session;
+    session = null;
+    await old?.release?.();
     session = await createSession(bytes);
+    vocab = v;
+    current = m;
+    writeJSON(MODEL_KEY, m.id);
     ui.setup.hidden = true;
-    setStatus(`Ready · ${backend === "webgpu" ? "GPU" : "CPU"}`, "ok");
+    ui.bar.hidden = true;
+    $("card").textContent = `(${m.card.replace(/_/g, " ")})`;
+    setStatus(`Ready · ${m.params} · ${backend === "webgpu" ? "GPU" : "CPU"}`, "ok");
     ui.pill.title = backend === "webgpu" ? "Running on your GPU (WebGPU)" : "Running on your CPU (WebAssembly)";
-    ui.mic.disabled = ui.pick.disabled = false;
+    showModelChip();
+    setStatus("Checking speed…", "busy");
+    await speedCheck(m);
+    setStatus(`Ready · ${m.params} · ${backend === "webgpu" ? "GPU" : "CPU"}`, "ok");
   } catch (e) {
     setStatus("Couldn't load model", "err");
-    ui.setup.hidden = false;
-    ui.download.hidden = true;
-    ui.setupText.replaceChildren(span(`${e.message || e}. Reload the page to try again.`, "err"));
+    showPicker(`${e.message || e}. Try again, or pick another size.`);
     console.error(e);
+  } finally {
+    ui.mic.disabled = ui.pick.disabled = ui.modelBtn.disabled = !session;
   }
 }
 
 async function createSession(bytes) {
   // onnxruntime silently drops WebGPU when there is no adapter, so check first.
-  let gpu = false;
-  try { gpu = !!(navigator.gpu && (await navigator.gpu.requestAdapter())); } catch { /* no WebGPU */ }
-  const tries = gpu ? [["webgpu", "wasm"], ["wasm"]] : [["wasm"]];
+  const tries = device?.webgpu ? [["webgpu", "wasm"], ["wasm"]] : [["wasm"]];
   let last;
   for (const eps of tries) {
     try {
@@ -121,6 +166,163 @@ async function createSession(bytes) {
     }
   }
   throw last;
+}
+
+// ------------------------------------------------------------------ choosing a size
+
+// Browsers deliberately reveal little: deviceMemory is rounded and capped at 8 GB (and
+// missing in Safari and Firefox), and WebGPU names the GPU family but not its memory.
+// So the hardware only rules things out; the speed check after loading decides.
+async function detectDevice() {
+  const ua = navigator.userAgent;
+  const d = {
+    webgpu: false, gpu: "",
+    memGB: navigator.deviceMemory ?? null,
+    threads: navigator.hardwareConcurrency || null,
+    mobile: navigator.userAgentData?.mobile ?? (/Android|iPhone|iPad|Mobile/i.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1)),
+  };
+  try {
+    const a = await navigator.gpu?.requestAdapter();
+    const info = a && (a.info || (await a.requestAdapterInfo?.()));
+    if (a && !(a.isFallbackAdapter || info?.isFallbackAdapter)) {
+      d.webgpu = true;
+      d.gpu = [info?.vendor, info?.architecture].filter(Boolean).join(" ");
+    }
+  } catch { /* no WebGPU */ }
+  return d;
+}
+
+function speedFor(m) {
+  // Seconds of compute per second of audio, measured for whichever size ran here last,
+  // scaled by file size for the others (compute grows roughly with parameter count).
+  const s = readJSON(SPEED_KEY);
+  if (!s || s.backend !== (device.webgpu ? "webgpu" : "wasm")) return null;
+  const ran = models.find((x) => x.id === s.id);
+  if (!ran) return null;
+  return { rtf: s.rtf * (m.bytes / ran.bytes), measured: ran.id === m.id };
+}
+
+function recommend() {
+  const small = models[0];
+  if (models.length === 1) return { id: small.id, why: "" };
+  const big = models[models.length - 1];
+  const pick = (m, why) => ({ id: m.id, why });
+  if (device.mobile) return pick(small, "Phones and tablets tend to run out of memory with the larger model.");
+  if (!device.webgpu) return pick(small, "This browser has no WebGPU, so the model would run on the CPU and the larger one would be slow.");
+  if (device.memGB != null && device.memGB < 8) return pick(small, `This device reports ${device.memGB} GB of memory, which is tight for the larger model.`);
+  const sp = speedFor(big);
+  if (sp) {
+    const perMin = Math.max(1, Math.round(sp.rtf * 60));
+    return sp.rtf <= MAX_RTF
+      ? pick(big, `From the speed check, ${big.name} should take about ${perMin} s per minute of audio here.`)
+      : pick(small, `From the speed check, ${big.name} would take about ${perMin} s per minute of audio here, so ${small.name} is the better fit.`);
+  }
+  return pick(big, `WebGPU works and this isn't a phone, so ${big.name} should run well. A quick speed check after loading confirms it.`);
+}
+
+function deviceLine() {
+  const bits = [];
+  bits.push(device.webgpu ? `<b>GPU</b> ${esc(device.gpu || "found")} (WebGPU)` : "<b>GPU</b> not available to the browser");
+  bits.push(device.memGB != null ? `<b>Memory</b> ${device.memGB >= 8 ? "8 GB or more" : `about ${device.memGB} GB`} (browsers cap this at 8)`
+    : "<b>Memory</b> not reported by this browser");
+  if (device.threads) bits.push(`<b>CPU</b> ${device.threads} threads`);
+  return bits.join(" · ");
+}
+
+function showPicker(error) {
+  const rec = recommend();
+  const selected = (current && current.id) || rec.id;
+  ui.setupTitle.textContent = session ? "Change model" : "Choose a model";
+  if (error) ui.setupText.replaceChildren(span(error, "err"));
+  else ui.setupText.textContent = rec.why ? `Recommended for this device: ${models.find((m) => m.id === rec.id).name}. ${rec.why}`
+    : "It downloads once and then stays on this device.";
+  ui.models.replaceChildren(...models.map((m) => {
+    const label = document.createElement("label");
+    label.className = "model";
+    const sp = speedFor(m);
+    const speed = sp ? ` · ${sp.measured ? "" : "about "}${fmtSpeed(sp.rtf)}` : "";
+    label.innerHTML = `<input type="radio" name="model" value="${esc(m.id)}">
+      <span class="m-name">${esc(m.name)} · ${esc(m.params)}</span>
+      <span class="m-size">${fmtBytes(m.bytes)}</span>
+      <span class="m-blurb">${esc(m.blurb)}${speed}</span>`;
+    const name = label.querySelector(".m-name");
+    if (m.id === rec.id && models.length > 1) name.append(span("Recommended", "tag tag-rec"));
+    if (cached[m.id]) {
+      name.append(span("On this device", "tag tag-have"));
+      if (m.id !== current?.id) {
+        const rm = document.createElement("button");
+        rm.className = "remove";
+        rm.type = "button";
+        rm.textContent = "Remove";
+        rm.onclick = async (e) => {
+          e.preventDefault();
+          await caches.delete(cacheName(m)).catch(() => {});
+          cached[m.id] = false;
+          showPicker();
+        };
+        label.querySelector(".m-size").replaceWith(rm);
+      }
+    }
+    const input = label.querySelector("input");
+    input.checked = m.id === selected;
+    input.onchange = updateDownload;
+    return label;
+  }));
+  ui.device.innerHTML = deviceLine();
+  ui.cancelPick.hidden = !session;
+  ui.download.hidden = false;
+  ui.bar.hidden = true;
+  ui.setup.hidden = false;
+  updateDownload();
+}
+
+function chosen() {
+  const id = ui.models.querySelector("input:checked")?.value;
+  return models.find((m) => m.id === id) || models[0];
+}
+
+function updateDownload() {
+  const m = chosen();
+  ui.downloadLabel.textContent = m.id === current?.id ? `Keep ${m.name}`
+    : cached[m.id] ? `Use ${m.name}` : `Download ${m.name} · ${fmtBytes(m.bytes)}`;
+}
+
+ui.download.onclick = () => {
+  const m = chosen();
+  if (m.id === current?.id) return (ui.setup.hidden = true);
+  ui.download.hidden = ui.cancelPick.hidden = true;
+  loadModel(m);
+};
+ui.cancelPick.onclick = () => { ui.setup.hidden = true; };
+ui.modelBtn.onclick = () => showPicker();
+
+function showModelChip() {
+  ui.modelBtn.hidden = false;
+  ui.modelName.textContent = `${current.name} · ${current.params}`;
+  const sp = speedFor(current);
+  ui.modelSpeed.textContent = sp?.measured ? fmtSpeed(sp.rtf) : "speed not measured";
+}
+
+// Time the model on 6 s of quiet noise. On the GPU the first run compiles shaders, so
+// time a second one unless the first was already slow. This also warms up the session.
+async function speedCheck(m) {
+  const n = 6 * SR;
+  const x = new Float32Array(n);
+  for (let i = 0; i < n; i++) x[i] = (Math.random() - 0.5) * 0.02;
+  let secs = 0;
+  try {
+    for (let i = 0; i < 2 && (i === 0 || secs <= 2); i++) {
+      const t0 = performance.now();
+      const r = await session.run({ waveform: new ort.Tensor("float32", x, [1, n]) });
+      if (r.logits.location === "gpu-buffer") await r.logits.getData();
+      r.logits.dispose?.();
+      secs = (performance.now() - t0) / 1000;
+    }
+  } catch (e) {
+    return console.warn("Speed check failed", e);
+  }
+  writeJSON(SPEED_KEY, { id: m.id, backend, rtf: secs / 6, at: new Date().toISOString() });
+  showModelChip();
 }
 
 // ------------------------------------------------------------------ audio
@@ -287,13 +489,22 @@ function setStatus(text, state = "busy") {
   ui.status.textContent = text;
   ui.pill.dataset.state = state;
 }
-function showBar(frac) {
+function showBar(frac, total) {
   ui.bar.hidden = false;
   ui.bar.querySelector(".progress > div").style.width = `${(frac * 100).toFixed(1)}%`;
   const mb = (x) => Math.round(x / 2 ** 20);
-  ui.barLabel.textContent = `${mb(frac * manifest.bytes)} of ${mb(manifest.bytes)} MB`;
-  setStatus(ui.setup.hidden ? "Loading model…" : `Downloading ${Math.round(frac * 100)}%`, "busy");
+  ui.barLabel.textContent = `${mb(frac * total)} of ${mb(total)} MB`;
+  setStatus(downloading ? `Downloading ${Math.round(frac * 100)}%` : "Loading model…", "busy");
 }
+// rtf: seconds of compute per second of audio.
+function fmtSpeed(rtf) {
+  const x = 1 / rtf;
+  return x >= 1.5 ? `${Math.round(x)}× real time` : `${(rtf * 60).toFixed(0)} s per minute of audio`;
+}
+function fmtBytes(b) { return b >= 1e9 ? `${(b / 2 ** 30).toFixed(1)} GB` : `${Math.round(b / 2 ** 20)} MB`; }
+function esc(t) { return String(t).replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`); }
+function readJSON(key) { try { return JSON.parse(localStorage.getItem(key)); } catch { return null; } }
+function writeJSON(key, v) { try { localStorage.setItem(key, JSON.stringify(v)); } catch { /* storage off */ } }
 function fmtTime(s) {
   s = Math.floor(s);
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
