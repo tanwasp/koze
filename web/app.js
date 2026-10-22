@@ -10,8 +10,10 @@ const HISTORY_KEY = "koze-history";
 
 const $ = (id) => document.getElementById(id);
 const ui = {
-  status: $("status"), download: $("download"), bar: $("bar"), mic: $("mic"), timer: $("timer"),
-  pick: $("pick"), file: $("file"), out: $("out"), meta: $("meta"), copy: $("copy"), history: $("history"),
+  pill: $("pill"), status: $("status"), stage: $("stage"), setup: $("setup"), setupText: $("setupText"),
+  download: $("download"), downloadLabel: $("downloadLabel"), bar: $("bar"), barLabel: $("barLabel"),
+  mic: $("mic"), micLabel: $("micLabel"), timer: $("timer"), wave: $("wave"), pick: $("pick"), file: $("file"),
+  out: $("out"), meta: $("meta"), copy: $("copy"), copyLabel: $("copyLabel"), history: $("history"),
 };
 
 let ort, session, vocab, manifest, backend;
@@ -22,16 +24,17 @@ async function init() {
   try {
     manifest = await (await fetch("model/manifest.json", { cache: "no-cache" })).json();
   } catch {
-    return setStatus("No model is published with this site yet.", "err");
+    return setStatus("No model published", "err");
   }
-  $("card").textContent = `(${manifest.card})`;
+  $("card").textContent = `(${manifest.card.replace(/_/g, " ")})`;
   const mb = Math.round(manifest.bytes / 2 ** 20);
   if (await isCached()) {
     await loadModel();
   } else {
-    setStatus(`The model is ${mb} MB. It downloads once and then stays on this device.`);
-    ui.download.textContent = `Download model (${mb} MB)`;
-    ui.download.hidden = false;
+    setStatus("Not installed", "");
+    ui.setupText.textContent = `The speech model is ${mb} MB. It downloads once and then stays on this device.`;
+    ui.downloadLabel.textContent = `Download model · ${mb} MB`;
+    ui.setup.hidden = false;
     ui.download.onclick = () => { ui.download.hidden = true; loadModel(); };
   }
 }
@@ -72,7 +75,6 @@ async function fetchModelBytes() {
       buf.set(value, offset);
       offset += value.length;
       showBar(offset / manifest.bytes);
-      setStatus(`Loading model… ${Math.round(offset / 2 ** 20)} / ${Math.round(manifest.bytes / 2 ** 20)} MB`);
     }
   }
   if (offset !== manifest.bytes) throw new Error("Model download was incomplete. Reload to retry.");
@@ -86,14 +88,18 @@ async function loadModel() {
     ort.env.wasm.numThreads = self.crossOriginIsolated ? Math.min(4, navigator.hardwareConcurrency || 1) : 1;
     const [bytes, v] = await Promise.all([fetchModelBytes(), fetch(manifest.vocab).then((r) => r.json())]);
     vocab = { pieces: v.pieces, control: new Set(v.control) };
-    setStatus("Preparing the model…");
+    setStatus("Preparing model…", "busy");
+    if (!ui.setup.hidden) ui.barLabel.textContent = "Preparing the model…";
     session = await createSession(bytes);
-    hideBar();
-    setStatus(`Ready. Running on ${backend === "webgpu" ? "your GPU (WebGPU)" : "your CPU (WebAssembly)"}.`, "ok");
+    ui.setup.hidden = true;
+    setStatus(`Ready · ${backend === "webgpu" ? "GPU" : "CPU"}`, "ok");
+    ui.pill.title = backend === "webgpu" ? "Running on your GPU (WebGPU)" : "Running on your CPU (WebAssembly)";
     ui.mic.disabled = ui.pick.disabled = false;
   } catch (e) {
-    hideBar();
-    setStatus(`Could not load the model: ${e.message || e}`, "err");
+    setStatus("Couldn't load model", "err");
+    ui.setup.hidden = false;
+    ui.download.hidden = true;
+    ui.setupText.replaceChildren(span(`${e.message || e}. Reload the page to try again.`, "err"));
     console.error(e);
   }
 }
@@ -179,6 +185,7 @@ function ctcGreedy(data, frames, vocabSize, voc) {
 async function transcribe(wav, label) {
   ui.mic.disabled = ui.pick.disabled = true;
   ui.out.textContent = "";
+  ui.out.classList.add("working");
   ui.copy.disabled = true;
   const seconds = wav.length / SR;
   const spans = splitOnPauses(wav);
@@ -186,7 +193,7 @@ async function transcribe(wav, label) {
   const parts = [];
   try {
     for (const [i, [a, b]] of spans.entries()) {
-      ui.meta.textContent = `Transcribing ${spans.length > 1 ? `part ${i + 1} of ${spans.length}` : ""}…`;
+      ui.meta.textContent = spans.length > 1 ? `Transcribing part ${i + 1} of ${spans.length}…` : "Transcribing…";
       const input = new ort.Tensor("float32", wav.slice(a, b), [1, b - a]);
       const res = await session.run({ waveform: input });
       const logits = res.logits;
@@ -199,7 +206,7 @@ async function transcribe(wav, label) {
     const secs = (performance.now() - t0) / 1000;
     const text = parts.join(" ").trim();
     ui.out.textContent = text || "(nothing recognised)";
-    ui.meta.textContent = `${seconds.toFixed(1)} s of audio in ${secs.toFixed(1)} s on ${backend}.`;
+    ui.meta.textContent = `${fmtTime(seconds)} of audio · transcribed in ${secs.toFixed(1)} s on ${backend === "webgpu" ? "GPU" : "CPU"}`;
     ui.copy.disabled = !text;
     if (text) saveHistory({ text, label, seconds: +seconds.toFixed(1), at: new Date().toISOString() });
   } catch (e) {
@@ -207,6 +214,7 @@ async function transcribe(wav, label) {
     ui.meta.append(span(`Transcription failed: ${e.message || e}`, "err"));
     console.error(e);
   } finally {
+    ui.out.classList.remove("working");
     ui.mic.disabled = ui.pick.disabled = false;
   }
 }
@@ -221,7 +229,8 @@ ui.mic.onclick = async () => {
   try {
     stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true } });
   } catch (e) {
-    return setStatus(`Microphone blocked: ${e.message}. Allow it in the address bar and try again.`, "err");
+    ui.meta.replaceChildren(span(`Microphone blocked (${e.message}). Allow it in the address bar and try again.`, "err"));
+    return;
   }
   chunks = [];
   recorder = new MediaRecorder(stream);
@@ -229,8 +238,11 @@ ui.mic.onclick = async () => {
   recorder.onstop = async () => {
     stream.getTracks().forEach((t) => t.stop());
     clearInterval(tick);
-    ui.mic.classList.remove("on");
-    ui.mic.textContent = "Tap to talk";
+    wave.stop();
+    ui.stage.classList.remove("recording");
+    ui.pick.disabled = false;
+    ui.micLabel.textContent = "Tap to talk";
+    ui.mic.setAttribute("aria-label", "Start recording");
     const blob = new Blob(chunks, { type: recorder.mimeType });
     try {
       const wav = await decodeTo16k(await blob.arrayBuffer());
@@ -241,14 +253,14 @@ ui.mic.onclick = async () => {
     }
   };
   recorder.start();
+  wave.start(stream);
   startedAt = Date.now();
-  ui.mic.classList.add("on");
-  ui.mic.textContent = "Tap to stop";
+  ui.stage.classList.add("recording");
+  ui.pick.disabled = true;
+  ui.micLabel.textContent = "Listening… tap to stop";
+  ui.mic.setAttribute("aria-label", "Stop recording");
   ui.timer.textContent = "0:00";
-  tick = setInterval(() => {
-    const s = Math.floor((Date.now() - startedAt) / 1000);
-    ui.timer.textContent = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
-  }, 250);
+  tick = setInterval(() => (ui.timer.textContent = fmtTime((Date.now() - startedAt) / 1000)), 250);
 };
 
 ui.pick.onclick = () => ui.file.click();
@@ -265,21 +277,89 @@ ui.file.onchange = async () => {
 };
 
 ui.copy.onclick = async () => {
-  try { await navigator.clipboard.writeText(ui.out.textContent); ui.copy.textContent = "Copied"; } catch { /* ignore */ }
-  setTimeout(() => (ui.copy.textContent = "Copy"), 1200);
+  try { await navigator.clipboard.writeText(ui.out.textContent); ui.copyLabel.textContent = "Copied"; } catch { /* ignore */ }
+  setTimeout(() => (ui.copyLabel.textContent = "Copy"), 1200);
 };
 
 // ------------------------------------------------------------------ bits
 
-function setStatus(text, cls = "") {
+function setStatus(text, state = "busy") {
   ui.status.textContent = text;
-  ui.status.className = cls;
+  ui.pill.dataset.state = state;
 }
 function showBar(frac) {
-  ui.bar.style.display = "block";
-  ui.bar.firstElementChild.style.width = `${Math.round(frac * 100)}%`;
+  ui.bar.hidden = false;
+  ui.bar.querySelector(".progress > div").style.width = `${(frac * 100).toFixed(1)}%`;
+  const mb = (x) => Math.round(x / 2 ** 20);
+  ui.barLabel.textContent = `${mb(frac * manifest.bytes)} of ${mb(manifest.bytes)} MB`;
+  setStatus(ui.setup.hidden ? "Loading model…" : `Downloading ${Math.round(frac * 100)}%`, "busy");
 }
-function hideBar() { ui.bar.style.display = "none"; }
+function fmtTime(s) {
+  s = Math.floor(s);
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+}
+
+// Live level bars while recording; a quiet dotted line otherwise.
+const wave = (() => {
+  const canvas = ui.wave, ctx = canvas.getContext("2d");
+  const BARS = 48;
+  let ac, analyser, raf, levels = new Array(BARS).fill(0);
+  function size() {
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = canvas.clientWidth * dpr;
+    canvas.height = canvas.clientHeight * dpr;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+  function draw() {
+    const w = canvas.clientWidth, h = canvas.clientHeight;
+    ctx.clearRect(0, 0, w, h);
+    const css = getComputedStyle(document.documentElement);
+    const grad = ctx.createLinearGradient(0, 0, w, 0);
+    grad.addColorStop(0, css.getPropertyValue("--accent-a").trim());
+    grad.addColorStop(1, css.getPropertyValue("--accent-b").trim());
+    const step = w / BARS, bw = Math.max(2, step * 0.42);
+    for (let i = 0; i < BARS; i++) {
+      const bh = Math.max(3, levels[i] * h * 0.95);
+      ctx.fillStyle = analyser ? grad : css.getPropertyValue("--fg-3").trim();
+      const x = i * step + (step - bw) / 2, y = (h - bh) / 2;
+      ctx.beginPath();
+      ctx.roundRect ? ctx.roundRect(x, y, bw, bh, bw / 2) : ctx.rect(x, y, bw, bh);
+      ctx.fill();
+    }
+  }
+  function loop() {
+    const buf = new Uint8Array(analyser.fftSize);
+    analyser.getByteTimeDomainData(buf);
+    let sum = 0;
+    for (const v of buf) sum += ((v - 128) / 128) ** 2;
+    const rms = Math.min(1, Math.sqrt(sum / buf.length) * 4);
+    levels = [...levels.slice(1), rms];
+    draw();
+    raf = requestAnimationFrame(loop);
+  }
+  size();
+  draw();
+  window.addEventListener("resize", () => { size(); draw(); });
+  matchMedia("(prefers-color-scheme: dark)").addEventListener?.("change", draw);
+  return {
+    start(stream) {
+      try {
+        ac = new AudioContext();
+        analyser = ac.createAnalyser();
+        analyser.fftSize = 1024;
+        ac.createMediaStreamSource(stream).connect(analyser);
+        loop();
+      } catch { analyser = null; }
+    },
+    stop() {
+      cancelAnimationFrame(raf);
+      ac?.close();
+      ac = analyser = null;
+      levels = new Array(BARS).fill(0);
+      draw();
+    },
+  };
+})();
 function span(text, cls) { const s = document.createElement("span"); s.className = cls; s.textContent = text; return s; }
 
 function loadHistory() {
@@ -295,7 +375,8 @@ function renderHistory(items = loadHistory()) {
     const li = document.createElement("li");
     li.textContent = h.text;
     const meta = document.createElement("small");
-    meta.textContent = `${new Date(h.at).toLocaleString()} · ${h.label} · ${h.seconds} s`;
+    const when = new Date(h.at).toLocaleString([], { dateStyle: "medium", timeStyle: "short" });
+    meta.textContent = `${when} · ${h.label === "recording" ? "Recording" : h.label} · ${fmtTime(h.seconds)}`;
     li.append(meta);
     return li;
   }));
