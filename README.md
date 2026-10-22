@@ -9,24 +9,35 @@ A transcription tool for Mauritian Creole (Kreol Morisien) audio. *Koze* is Kreo
 
 ### Collecting Kreol speech
 
-After each transcription the page offers an optional "Help teach it Kreol" form: play the clip back, correct the transcript, rate it, tag what went wrong and which languages were spoken, and share. The first share shows a consent screen (18+, what is sent and why, an opt-in for open release, and optional speaker details). Uploads also need "everyone who speaks agreed". Shared clips can be withdrawn from the same browser.
+Anyone can use the transcriber without an account. After a transcription, a signed-out visitor sees an invitation to help. A signed-in contributor sees a form to play the clip back, correct the transcript, rate it, tag what went wrong and which languages were spoken, and share it.
 
-Each shared clip stores the 16 kHz mono WAV the model heard, the model's output untouched, the corrected text exactly as typed, whether the contributor aimed for Grafi Larmoni spelling, the feedback, the model and backend, and the consent version.
+- **Sign-in** is a passwordless email code (Supabase Auth). There are no passwords to store, leak or reset, and the same code creates the account.
+- **Consent** is recorded on the account with its version and time. It covers being 18+, what is sent and why, an opt-in for open release, and optional speaker details. Uploads also need "everyone who speaks agreed". Each clip keeps a copy of the terms it was shared under.
+- **Roles:** everyone starts as `contributor`. Set `role` to `collector` (a volunteer or paid transcriber) or `admin` (can read every clip) in the `profiles` table in the Supabase dashboard. Nobody can change their own role.
+- **Account page:** contributors see their clips, minutes and corrections, can play or delete any clip, and can delete the whole account.
 
-Storage is a free Supabase project. The page only holds its public key, and `supabase/schema.sql` limits that key to adding a clip, uploading its audio and withdrawing a clip with its token. It can't read, list or overwrite anything. `tools/export_dataset.py` uses the service-role key on your own machine to download everything as a Hugging Face audiofolder dataset, optionally push it, and delete withdrawn audio.
+Each clip stores:
+- the 16 kHz mono WAV the model heard;
+- the model's output, untouched;
+- the corrected text, exactly as typed;
+- whether the contributor aimed for Grafi Larmoni spelling;
+- the feedback;
+- the model and backend.
+
+The page holds only the project's public key, and `supabase/schema.sql` scopes every request to the signed-in person with row-level security. `tools/export_dataset.py` runs on your own machine with the service-role key. It:
+- downloads everything as a Hugging Face audiofolder dataset, with a hashed contributor id per clip;
+- optionally pushes it;
+- writes a per-contributor summary for paying collectors;
+- deletes orphaned audio.
 
 To turn it on:
 1. Create a Supabase project (free tier) and run `supabase/schema.sql` in its SQL editor.
-2. In this repo's Settings > Secrets and variables > Actions > Variables, set `SUPABASE_URL` (like `https://abcd.supabase.co`) and `SUPABASE_KEY` (the publishable or anon key, never the secret/service-role key; the build refuses those).
-3. Re-run the Pages workflow. Without these variables the form stays hidden.
+2. Authentication > Emails: set up custom SMTP (for example Resend's free tier). Supabase's built-in email only reaches your own team's addresses, a few emails an hour.
+3. Authentication > Emails > Templates > Magic link: make the body show the code, for example `<p>Your Koze code is <b>{{ .Token }}</b></p>`, so people get a code instead of a link.
+4. In this repo, go to Settings > Secrets and variables > Actions > Variables. Set `SUPABASE_URL` (like `https://abcd.supabase.co`) and `SUPABASE_KEY`. Use the publishable or anon key, never the secret/service-role key; the build refuses those.
+5. Re-run the Pages workflow. Without these variables the site works as before, with no sign-in.
 
-The free tier holds about 1 GB of audio, roughly 8 hours, and pauses a project after a week with no requests (unpause it from the dashboard; nothing is lost). Export to Hugging Face before it fills.
-
-
-
-`tools/export_onnx.py` converts a CTC model to ONNX and makes 8-bit copies. `tools/verify_onnx.py` checks them against Meta's PyTorch pipeline on synthesised Kreol speech: the fp32 graph must match it, and the 8-bit file that ships must change at most 3% of characters. `tools/build_site.py pack` splits the chosen file into 40 MB parts with a SHA-256 for each, and `build_site.py site` assembles the site. CI runs all of this on every PR and deploys on `main`. The check results appear in the job summary.
-
-The 1B model has its own job, which runs once the repository has an `HF_REPO` variable (for example `tanwasp/koze-models`) and an `HF_TOKEN` secret with write access to that repo, both under *Settings > Secrets and variables > Actions*. It converts and checks the model the same way and uploads the parts with `tools/publish_hf.py`.
+The free tier holds about 1 GB of audio, roughly 8 hours. It also pauses a project after a week with no requests; unpause it from the dashboard and nothing is lost. Export to Hugging Face before it fills.
 
 ### Choosing a size
 
