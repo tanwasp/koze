@@ -303,10 +303,12 @@ function showModelChip() {
   ui.modelSpeed.textContent = sp?.measured ? fmtSpeed(sp.rtf) : "speed not measured";
 }
 
-// Time the model on 6 s of quiet noise. On the GPU the first run compiles shaders, so
-// time a second one unless the first was already slow. This also warms up the session.
+// Time the model on a few seconds of quiet noise. On the GPU the first run compiles
+// shaders, so time a second one unless the first was already slow. This also warms up the
+// session. The CPU backend blocks the page while it runs, so its clip is shorter.
 async function speedCheck(m) {
-  const n = 6 * SR;
+  const clip = backend === "webgpu" ? 6 : 2;
+  const n = clip * SR;
   const x = new Float32Array(n);
   for (let i = 0; i < n; i++) x[i] = (Math.random() - 0.5) * 0.02;
   let secs = 0;
@@ -321,7 +323,7 @@ async function speedCheck(m) {
   } catch (e) {
     return console.warn("Speed check failed", e);
   }
-  writeJSON(SPEED_KEY, { id: m.id, backend, rtf: secs / 6, at: new Date().toISOString() });
+  writeJSON(SPEED_KEY, { id: m.id, backend, rtf: secs / clip, at: new Date().toISOString() });
   showModelChip();
 }
 
