@@ -1,0 +1,9 @@
+omnilingual-asr==0.2.0
+# fairseq2n pins torch 2.8.0; torchaudio must match or it fails to load.
+torch==2.8.0
+torchaudio==2.8.0
+# fairseq2 needs numpy<2; newer pyarrow needs numpy>=2.
+pyarrow>=20,<21
+gradio>=5,<6
+jiwer>=3
+soundfile>=0.12
