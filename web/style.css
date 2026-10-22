@@ -216,10 +216,31 @@ legend.field { margin-bottom: 8px; }
 .c-status[data-state="ok"] { color: var(--ok); }
 .c-status[data-state="err"] { color: var(--err); }
 
-#shared { list-style: none; padding: 0 8px 8px; margin: 0; }
-#shared li { padding: 12px 8px; border-top: 1px solid var(--border); }
-#shared small { display: block; color: var(--fg-3); font-size: 12px; margin-top: 2px; }
-#shared .link { font-size: 12px; }
+.nav-right { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.nav-btn { padding: 6px 12px; font-size: 13px; }
+.avatar { font: inherit; font-weight: 600; font-size: 14px; width: 32px; height: 32px; flex: none; border-radius: 50%; border: none; cursor: pointer;
+  color: var(--accent-ink); background: linear-gradient(135deg, var(--accent-a), var(--accent-b)); }
+.invite { margin-top: 20px; padding-top: 18px; border-top: 1px solid var(--border); display: flex; gap: 12px 16px;
+  align-items: center; justify-content: space-between; flex-wrap: wrap; }
+.invite p { margin: 0; font-size: 14px; color: var(--fg-2); flex: 1 1 260px; }
+.invite b { color: var(--fg); font-weight: 600; }
+.stack { display: grid; gap: 8px; }
+.consent input[type="email"], .consent input[type="text"], .consent #displayName { font: inherit; font-size: 16px; color: var(--fg);
+  background: var(--surface-2); border: 1px solid var(--border-strong); border-radius: 14px; padding: 10px 12px; width: 100%; min-width: 0; }
+.consent input:focus-visible { outline: 2px solid var(--accent-b); outline-offset: 1px; }
+#code { letter-spacing: .3em; font-variant-numeric: tabular-nums; font-size: 20px; }
+.row-in { display: flex; gap: 8px; margin-top: 6px; }
+.acct-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.stat { border: 1px solid var(--border); border-radius: 14px; padding: 10px 12px; background: var(--surface-2); }
+.stat .n { display: block; font-size: 22px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.stat .l { font-size: 12px; color: var(--fg-3); }
+#myClips { list-style: none; padding: 0; margin: 0; max-height: 40vh; overflow: auto; }
+#myClips li { padding: 10px 0; border-top: 1px solid var(--border); font-size: 14px; overflow-wrap: anywhere; }
+#myClips small { display: block; color: var(--fg-3); font-size: 12px; margin-top: 2px; }
+#myClips .link { font-size: 12px; }
+#myClips audio { width: 100%; height: 36px; margin-top: 6px; }
+.muted { color: var(--fg-3); font-size: 14px; }
 
 dialog { border: 1px solid var(--border-strong); border-radius: 24px; padding: 0; background: var(--bg); color: var(--fg);
   width: min(560px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); box-shadow: var(--shadow); }
