@@ -1,0 +1,50 @@
+[
+  {
+    "file": "mfe_01.wav",
+    "text": "Bonzour, kouma ou ete? Mo bien kontan trouv ou.",
+    "model_sees": "bonzour kouma ou ete mo bien kontan trouv ou",
+    "seconds": 4.38
+  },
+  {
+    "file": "mfe_02.wav",
+    "text": "Zordi lapli pe tonbe depi gramatin, me aswar pou ena soley.",
+    "model_sees": "zordi lapli pe tonbe depi gramatin me aswar pou ena soley",
+    "seconds": 4.83
+  },
+  {
+    "file": "mfe_03.wav",
+    "text": "Mo pe al bazar Port-Louis pou aste legim ek pwason.",
+    "model_sees": "mo pe al bazar port-louis pou aste legim ek pwason",
+    "seconds": 4.96
+  },
+  {
+    "file": "mfe_04.wav",
+    "text": "Eski to kapav ed mwa ranz sa program-la avan Lindi?",
+    "model_sees": "eski to kapav ed mwa ranz sa program-la avan lindi",
+    "seconds": 4.4
+  },
+  {
+    "file": "mfe_05.wav",
+    "text": "Kan mo ti piti, mo gran-mer ti rakont mwa zistwar Ti-Zan.",
+    "model_sees": "kan mo ti piti mo gran-mer ti rakont mwa zistwar ti-zan",
+    "seconds": 4.61
+  },
+  {
+    "file": "mfe_06.wav",
+    "text": "Lekol finn ferme akoz siklonn, tou zanfan res lakaz.",
+    "model_sees": "lekol finn ferme akoz siklonn tou zanfan res lakaz",
+    "seconds": 3.89
+  },
+  {
+    "file": "mfe_07.wav",
+    "text": "Kreol Morisien se enn lalang ki tou Morisien konpran.",
+    "model_sees": "kreol morisien se enn lalang ki tou morisien konpran",
+    "seconds": 5.41
+  },
+  {
+    "file": "mfe_08.wav",
+    "text": "Ki ler li ete? Mo panse mo pou reta pou travay!",
+    "model_sees": "ki ler li ete mo panse mo pou reta pou travay",
+    "seconds": 4.67
+  }
+]
