@@ -1,4 +1,4 @@
-# Conversion and verification (CI). Install torch from the CPU index first, see the workflow.
+# Conversion and verification (CI).
 omnilingual-asr==0.2.0
 # fairseq2n pins torch 2.8.0; torchaudio must match or it fails to load.
 torch==2.8.0

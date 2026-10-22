@@ -30,10 +30,12 @@ jobs:
       - name: Install system audio library
         run: sudo apt-get update -q && sudo apt-get install -y -q libsndfile1
 
+      # fairseq2n refuses a CPU-only torch, so this pulls the default CUDA build (about 4 GB).
+      - name: Free disk space
+        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL && df -h /
+
       - name: Install Python packages
-        run: |
-          pip install -q torch==2.8.0 torchaudio==2.8.0 --index-url https://download.pytorch.org/whl/cpu
-          pip install -q -r tools/requirements-export.txt
+        run: pip install -q -r tools/requirements-export.txt
 
       - name: Restore converted model
         id: cache
