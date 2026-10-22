@@ -450,7 +450,7 @@ async function transcribe(wav, label) {
 
 // ------------------------------------------------------------------ read aloud
 
-// The voice is a separate model of about 140 MB, so it downloads only when someone first
+// The voice is a separate model of about 110 MB, so it downloads only when someone first
 // presses Listen. It runs on the CPU (WebAssembly): it is small, and its random sampling
 // operators aren't available on WebGPU.
 let voiceInfo = null, voice = null, voiceLoading = null, playing = null, spoken = null, transcribing = false;
