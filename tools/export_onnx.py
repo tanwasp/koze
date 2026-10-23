@@ -13,6 +13,8 @@ Writes:
 from __future__ import annotations
 
 import argparse
+import subprocess
+import sys
 import json
 from pathlib import Path
 
@@ -79,28 +81,67 @@ def ctc_greedy(logits, vocab: dict) -> str:
     return "".join(out).replace("\u2581", " ").strip()
 
 
-def check_parity(wrapped: nn.Module, out: Path, seconds=(1.3, 4.0, 11.7, 30.0)) -> dict:
-    """Compare PyTorch against both ONNX files on noise clips of several lengths.
-    Reports how often the per-frame CTC argmax agrees (1.0 = identical decoding)."""
+PARITY_SECONDS = (1.3, 4.0, 11.7, 30.0)
+
+
+def parity_inputs():
+    g = torch.Generator().manual_seed(0)
+    return {f"{s}s": torch.randn(1, int(16000 * s), generator=g) * 0.1 for s in PARITY_SECONDS}
+
+
+def check_parity(refs: dict, out: Path) -> dict:
+    """Compare PyTorch outputs (computed before the model was freed) against each ONNX
+    file on noise clips of several lengths. argmax_agree is how often the per-frame CTC
+    argmax agrees (1.0 = identical decoding). One ONNX session is loaded at a time."""
+    import gc
+
     import numpy as np
     import onnxruntime as ort
 
-    names = [n for n in ("model.onnx", "model.int8.onnx", "model.int8pc.onnx") if (out / n).exists()]
-    sessions = {n: ort.InferenceSession(str(out / n)) for n in names}
-    g = torch.Generator().manual_seed(0)
-    report = {}
-    for secs in seconds:
-        x = torch.randn(1, int(16000 * secs), generator=g) * 0.1
-        with torch.no_grad():
-            ref = wrapped(x).numpy()
-        row = {}
-        for name, sess in sessions.items():
-            got = sess.run(None, {"waveform": x.numpy()})[0]
+    inputs = parity_inputs()
+    report = {k: {} for k in refs}
+    for name in ("model.onnx", "model.int8.onnx", "model.int8pc.onnx"):
+        if not (out / name).exists():
+            continue
+        sess = ort.InferenceSession(str(out / name))
+        for k, ref in refs.items():
+            got = sess.run(None, {"waveform": inputs[k].numpy()})[0]
             assert got.shape == ref.shape, (name, got.shape, ref.shape)
-            row[name] = {"max_abs_diff": float(np.abs(got - ref).max()),
-                         "argmax_agree": float((got.argmax(-1) == ref.argmax(-1)).mean())}
-        report[f"{secs}s"] = row
+            report[k][name] = {"max_abs_diff": float(np.abs(got - ref).max()),
+                               "argmax_agree": float((got.argmax(-1) == ref.argmax(-1)).mean())}
+        del sess
+        gc.collect()
     return report
+
+
+def quantize(src: Path, dst: Path, per_channel: bool) -> None:
+    from onnxruntime.quantization import QuantType, quantize_dynamic
+
+    quantize_dynamic(str(src), str(dst), weight_type=QuantType.QUInt8,
+                     op_types_to_quantize=["MatMul", "Gemm"], per_channel=per_channel)
+
+
+def export(card: str, random: bool, out: Path, opset: int, check: bool) -> int:
+    model, tokenizer = load(card, random)
+    model.eval()
+    wrapped = CtcForExport(model).eval()
+    dummy = torch.randn(1, 16000 * 4)
+    with torch.no_grad():
+        torch.onnx.export(
+            wrapped, (dummy,), str(out / "model.onnx"),
+            input_names=["waveform"], output_names=["logits"],
+            dynamic_axes={"waveform": {1: "samples"}, "logits": {1: "frames"}},
+            opset_version=opset, dynamo=False,
+        )
+    vocab_size = int(model.final_proj.weight.shape[0])
+    if tokenizer is not None:
+        export_vocab(tokenizer, vocab_size, out / "vocab.json")
+    if check:
+        import numpy as np
+
+        with torch.no_grad():
+            np.savez(out / "parity_refs.npz", **{k: wrapped(x).numpy() for k, x in parity_inputs().items()})
+    return vocab_size
 
 
 def main() -> None:
@@ -110,37 +151,31 @@ def main() -> None:
     p.add_argument("--random", action="store_true", help="random weights (pipeline test only)")
     p.add_argument("--opset", type=int, default=17)
     p.add_argument("--check", action="store_true", help="compare ONNX outputs with PyTorch")
+    p.add_argument("--step", choices=["all", "export", "int8", "int8pc", "check"], default="all", help=argparse.SUPPRESS)
     a = p.parse_args()
     out = Path(a.out)
     out.mkdir(parents=True, exist_ok=True)
 
-    model, tokenizer = load(a.card, a.random)
-    model.eval()
-    wrapped = CtcForExport(model).eval()
-    dummy = torch.randn(1, 16000 * 4)
-    with torch.no_grad():
-        torch.onnx.export(
-            wrapped, (dummy,), str(out / "model.onnx"),
-            input_names=["waveform"], output_names=["logits"],
-            dynamic_axes={"waveform": {1: "samples"}, "logits": {1: "frames"}},
-            opset_version=a.opset, dynamo=False, external_data=False,
-        )
+    if a.step == "export":
+        print(json.dumps({"vocab_size": export(a.card, a.random, out, a.opset, a.check)}))
+    elif a.step in ("int8", "int8pc"):
+        # int8pc: per-channel scales, the fallback if per-tensor 8-bit loses too much accuracy.
+        quantize(out / "model.onnx", out / f"model.{a.step}.onnx", per_channel=a.step == "int8pc")
+    elif a.step == "check":
+        import numpy as np
 
-    from onnxruntime.quantization import QuantType, quantize_dynamic
-
-    quantize_dynamic(str(out / "model.onnx"), str(out / "model.int8.onnx"), weight_type=QuantType.QUInt8,
-                     op_types_to_quantize=["MatMul", "Gemm"])
-    # Fallback if per-tensor 8-bit loses too much accuracy (see verify_onnx.py).
-    quantize_dynamic(str(out / "model.onnx"), str(out / "model.int8pc.onnx"), weight_type=QuantType.QUInt8,
-                     op_types_to_quantize=["MatMul", "Gemm"], per_channel=True)
-
-    vocab_size = int(model.final_proj.weight.shape[0])
-    if tokenizer is not None:
-        export_vocab(tokenizer, vocab_size, out / "vocab.json")
-    result = {"vocab_size": vocab_size, "files": sorted(f.name for f in out.iterdir())}
-    if a.check:
-        result["parity"] = check_parity(wrapped, out)
-    print(json.dumps(result, indent=1))
+        refs = dict(np.load(out / "parity_refs.npz"))
+        print(json.dumps({"parity": check_parity(refs, out)}, indent=1))
+    else:
+        # Each step runs in its own process so memory is fully returned between them:
+        # for the 1B model, PyTorch holds about 5 GB and the quantiser peaks near 11 GB,
+        # which together don't fit on a 16 GB machine.
+        base = [sys.executable, __file__, "--card", a.card, "--out", str(out), "--opset", str(a.opset)]
+        base += ["--random"] * a.random + ["--check"] * a.check
+        steps = ["export", "int8", "int8pc"] + ["check"] * a.check
+        for step in steps:
+            subprocess.run(base + ["--step", step], check=True)
+        print(json.dumps({"files": sorted(f.name for f in out.glob("*.onnx"))}))
 
 
 if __name__ == "__main__":

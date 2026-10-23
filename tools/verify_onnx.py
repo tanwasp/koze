@@ -12,6 +12,7 @@ how good the model is at Kreol.
 from __future__ import annotations
 
 import argparse
+import gc
 import json
 import os
 import sys
@@ -73,18 +74,23 @@ def main() -> None:
     import torch
     from omnilingual_asr.models.inference.pipeline import ASRInferencePipeline
 
-    pipe = ASRInferencePipeline(model_card=a.card, device="cpu", dtype=torch.float32)
     vocab = json.loads((d / "vocab.json").read_text())
     variants = [n for n in ("model.onnx", "model.int8.onnx", "model.int8pc.onnx") if (d / n).exists()]
-    sessions = {n: ort.InferenceSession(str(d / n)) for n in variants}
+    clips = tts_clips()
 
-    rows = []
-    for name, wav in tts_clips():
-        ref = pipe.transcribe([{"waveform": wav, "sample_rate": 16000}], batch_size=1)[0]
-        row = {"clip": name, "seconds": round(len(wav) / 16000, 1), "pytorch": ref}
-        for n, sess in sessions.items():
+    # One model in memory at a time: the 1B model is about 4 GB in fp32.
+    pipe = ASRInferencePipeline(model_card=a.card, device="cpu", dtype=torch.float32)
+    rows = [{"clip": name, "seconds": round(len(wav) / 16000, 1),
+             "pytorch": pipe.transcribe([{"waveform": wav, "sample_rate": 16000}], batch_size=1)[0]}
+            for name, wav in clips]
+    del pipe
+    gc.collect()
+    for n in variants:
+        sess = ort.InferenceSession(str(d / n))
+        for row, (_, wav) in zip(rows, clips):
             row[n] = ctc_greedy(sess.run(None, {"waveform": wav[None, :]})[0], vocab)
-        rows.append(row)
+        del sess
+        gc.collect()
 
     summary = {}
     for n in variants:

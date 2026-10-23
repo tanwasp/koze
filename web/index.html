@@ -7,168 +7,11 @@
 <meta name="description" content="Kreol Morisien speech to text that runs entirely on your device.">
 <meta name="theme-color" content="#0a0a0c" media="(prefers-color-scheme: dark)">
 <meta name="theme-color" content="#f7f5f2" media="(prefers-color-scheme: light)">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet">
-<style>
-  :root {
-    --bg: #0a0a0c;
-    --surface: rgba(255, 255, 255, 0.035);
-    --surface-2: rgba(255, 255, 255, 0.06);
-    --border: rgba(255, 255, 255, 0.08);
-    --border-strong: rgba(255, 255, 255, 0.14);
-    --fg: #f4f2ee;
-    --fg-2: rgba(244, 242, 238, 0.62);
-    --fg-3: rgba(244, 242, 238, 0.38);
-    --accent-a: #ff7a59;
-    --accent-b: #ffb547;
-    --accent-ink: #1a0f08;
-    --ok: #4ade80;
-    --busy: #ffb547;
-    --err: #f87171;
-    --glow-1: rgba(255, 122, 89, 0.22);
-    --glow-2: rgba(45, 212, 191, 0.14);
-    --shadow: 0 1px 0 rgba(255,255,255,0.04) inset, 0 30px 80px -30px rgba(0,0,0,0.6);
-  }
-  @media (prefers-color-scheme: light) {
-    :root {
-      --bg: #f7f5f2;
-      --surface: rgba(255, 255, 255, 0.72);
-      --surface-2: rgba(20, 16, 12, 0.04);
-      --border: rgba(20, 16, 12, 0.08);
-      --border-strong: rgba(20, 16, 12, 0.14);
-      --fg: #16130f;
-      --fg-2: rgba(22, 19, 15, 0.62);
-      --fg-3: rgba(22, 19, 15, 0.4);
-      --ok: #16a34a;
-      --busy: #d97706;
-      --err: #dc2626;
-      --glow-1: rgba(255, 122, 89, 0.18);
-      --glow-2: rgba(45, 212, 191, 0.12);
-      --shadow: 0 1px 0 rgba(255,255,255,0.8) inset, 0 30px 60px -30px rgba(60,40,20,0.18);
-    }
-  }
-  * { box-sizing: border-box; }
-  html { -webkit-text-size-adjust: 100%; }
-  body {
-    margin: 0; min-height: 100vh; background: var(--bg); color: var(--fg);
-    font: 15px/1.55 Inter, system-ui, -apple-system, "Segoe UI", sans-serif;
-    font-feature-settings: "cv11", "ss01"; -webkit-font-smoothing: antialiased;
-    overflow-x: hidden;
-  }
-  body::before, body::after {
-    content: ""; position: fixed; z-index: 0; pointer-events: none; border-radius: 50%; filter: blur(80px);
-  }
-  body::before { width: 620px; height: 620px; top: -260px; left: 50%; transform: translateX(-70%); background: var(--glow-1); }
-  body::after { width: 520px; height: 520px; bottom: -280px; right: -160px; background: var(--glow-2); }
-  .wrap { position: relative; z-index: 1; max-width: 720px; margin: 0 auto; padding: 20px 16px 56px; }
-
-  nav { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 4px 0 40px; }
-  .brand { display: flex; align-items: center; gap: 10px; font-weight: 600; letter-spacing: -0.01em; font-size: 17px; }
-  .brand-mark { width: 26px; height: 26px; border-radius: 8px; background: linear-gradient(135deg, var(--accent-a), var(--accent-b));
-    display: grid; place-items: center; box-shadow: 0 6px 20px -6px var(--accent-a); }
-  .brand-mark svg { width: 15px; height: 15px; color: var(--accent-ink); }
-  .pill { display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px; border-radius: 999px;
-    background: var(--surface); border: 1px solid var(--border); font-size: 13px; color: var(--fg-2);
-    backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); white-space: nowrap; max-width: 60vw; overflow: hidden; text-overflow: ellipsis; }
-  .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--fg-3); flex: none; }
-  .pill[data-state="busy"] .dot { background: var(--busy); animation: blink 1.2s ease-in-out infinite; }
-  .pill[data-state="ok"] .dot { background: var(--ok); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 20%, transparent); }
-  .pill[data-state="err"] .dot { background: var(--err); }
-  @keyframes blink { 50% { opacity: .35; } }
-
-  header { text-align: center; margin-bottom: 32px; }
-  h1 { font-family: "Instrument Serif", Georgia, serif; font-weight: 400; font-size: clamp(40px, 9vw, 64px);
-    line-height: 1.02; letter-spacing: -0.02em; margin: 0 0 14px; }
-  h1 em { font-style: italic; background: linear-gradient(100deg, var(--accent-a), var(--accent-b));
-    -webkit-background-clip: text; background-clip: text; color: transparent; padding-right: .06em; }
-  .lede { color: var(--fg-2); margin: 0 auto; max-width: 440px; font-size: 16px; }
-  .badges { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; margin-top: 18px; }
-  .badge { font-size: 12px; color: var(--fg-2); padding: 4px 10px; border-radius: 999px; border: 1px solid var(--border); }
-
-  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 24px; box-shadow: var(--shadow);
-    backdrop-filter: blur(20px) saturate(140%); -webkit-backdrop-filter: blur(20px) saturate(140%); }
-
-  .stage { padding: 36px 24px 28px; display: flex; flex-direction: column; align-items: center; gap: 20px; margin-bottom: 16px; }
-  .stage:has(#setup:not([hidden])) .recorder { display: none; }
-  .recorder { display: contents; }
-  .setup { width: 100%; max-width: 420px; text-align: center; }
-  .setup h2 { font-size: 15px; font-weight: 600; margin: 0 0 6px; }
-  .setup p { margin: 0 0 18px; color: var(--fg-2); font-size: 14px; }
-  .progress { height: 4px; border-radius: 4px; background: var(--surface-2); overflow: hidden; margin-top: 16px; }
-  .progress > div { height: 100%; width: 0; border-radius: 4px; background: linear-gradient(90deg, var(--accent-a), var(--accent-b)); transition: width .25s ease; }
-  .progress-label { margin-top: 8px; font-size: 12px; color: var(--fg-3); font-variant-numeric: tabular-nums; }
-
-  .btn { font: inherit; font-weight: 500; display: inline-flex; align-items: center; justify-content: center; gap: 8px;
-    border-radius: 999px; padding: 10px 18px; cursor: pointer; border: 1px solid var(--border-strong);
-    background: var(--surface-2); color: var(--fg); transition: transform .15s ease, background .15s ease, opacity .15s; }
-  .btn:hover:not(:disabled) { background: color-mix(in srgb, var(--fg) 10%, transparent); }
-  .btn:active:not(:disabled) { transform: scale(.97); }
-  .btn:disabled { opacity: .4; cursor: not-allowed; }
-  .btn svg { width: 16px; height: 16px; }
-  .btn-primary { border: none; color: var(--accent-ink); background: linear-gradient(135deg, var(--accent-a), var(--accent-b));
-    box-shadow: 0 10px 30px -10px var(--accent-a); font-weight: 600; }
-  .btn-primary:hover:not(:disabled) { background: linear-gradient(135deg, var(--accent-a), var(--accent-b)); filter: brightness(1.06); }
-  .btn-ghost { border-color: transparent; background: transparent; color: var(--fg-2); padding: 8px 12px; }
-
-  .mic-wrap { position: relative; width: 132px; height: 132px; display: grid; place-items: center; }
-  .mic-wrap::before, .mic-wrap::after { content: ""; position: absolute; inset: 0; border-radius: 50%;
-    border: 1px solid color-mix(in srgb, var(--accent-a) 45%, transparent); opacity: 0; pointer-events: none; }
-  .recording .mic-wrap::before { animation: ripple 2s ease-out infinite; }
-  .recording .mic-wrap::after { animation: ripple 2s ease-out 1s infinite; }
-  @keyframes ripple { from { transform: scale(.85); opacity: .9; } to { transform: scale(1.45); opacity: 0; } }
-  #mic { width: 104px; height: 104px; border-radius: 50%; border: none; cursor: pointer; position: relative;
-    background: radial-gradient(circle at 30% 25%, #ffd29a, var(--accent-b) 30%, var(--accent-a) 75%);
-    color: var(--accent-ink); display: grid; place-items: center;
-    box-shadow: 0 0 0 1px rgba(255,255,255,.18) inset, 0 18px 50px -12px var(--accent-a), 0 0 80px -10px var(--glow-1);
-    transition: transform .2s ease, filter .2s ease, opacity .2s ease; }
-  #mic:hover:not(:disabled) { transform: scale(1.04); }
-  #mic:active:not(:disabled) { transform: scale(.96); }
-  #mic:disabled { filter: grayscale(1) brightness(.6); opacity: .5; cursor: not-allowed; box-shadow: none; }
-  #mic svg { width: 36px; height: 36px; }
-  #mic .i-stop { display: none; width: 40px; height: 40px; }
-  .recording #mic .i-mic { display: none; }
-  .recording #mic .i-stop { display: block; }
-
-  #wave { width: 100%; max-width: 420px; height: 56px; display: block; }
-  .controls { display: flex; flex-direction: column; align-items: center; gap: 6px; }
-  #micLabel { font-weight: 500; }
-  #timer { font-variant-numeric: tabular-nums; color: var(--fg-3); font-size: 13px; letter-spacing: .04em; }
-  .divider { display: flex; align-items: center; gap: 12px; width: 100%; max-width: 320px; color: var(--fg-3); font-size: 12px; }
-  .divider::before, .divider::after { content: ""; flex: 1; height: 1px; background: var(--border); }
-
-  .transcript { padding: 22px 24px; margin-bottom: 16px; }
-  .t-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
-  .label { font-size: 12px; text-transform: uppercase; letter-spacing: .1em; color: var(--fg-3); font-weight: 500; }
-  #out { white-space: pre-wrap; margin: 0; min-height: 3.2em; font-size: 22px; line-height: 1.5; letter-spacing: -0.005em; }
-  #out:empty::before { content: "Your words will appear here."; color: var(--fg-3); font-family: "Instrument Serif", Georgia, serif; font-style: italic; }
-  #out.working { background: linear-gradient(90deg, var(--fg) 40%, var(--fg-3) 50%, var(--fg) 60%); background-size: 300% 100%;
-    -webkit-background-clip: text; background-clip: text; color: transparent; animation: shimmer 1.6s linear infinite; }
-  @keyframes shimmer { from { background-position: 100% 0; } to { background-position: 0 0; } }
-  #meta { margin-top: 12px; font-size: 13px; color: var(--fg-3); min-height: 1.2em; }
-  .err { color: var(--err); }
-
-  .history { padding: 6px 8px; }
-  details summary { list-style: none; cursor: pointer; padding: 14px 16px; display: flex; justify-content: space-between; align-items: center; }
-  details summary::-webkit-details-marker { display: none; }
-  details summary svg { width: 16px; height: 16px; color: var(--fg-3); transition: transform .2s; }
-  details[open] summary svg { transform: rotate(180deg); }
-  #history { list-style: none; padding: 0 8px 8px; margin: 0; }
-  #history li { padding: 12px 8px; border-top: 1px solid var(--border); }
-  #history small { display: block; color: var(--fg-3); font-size: 12px; margin-top: 2px; }
-  #history:empty::before { content: "Nothing yet."; display: block; padding: 4px 8px 12px; color: var(--fg-3); font-size: 14px; }
-
-  footer { text-align: center; color: var(--fg-3); font-size: 12px; margin-top: 36px; line-height: 1.7; }
-  footer a { color: var(--fg-2); text-decoration: none; border-bottom: 1px solid var(--border-strong); }
-  [hidden] { display: none !important; }
-  @media (max-width: 480px) {
-    nav { padding-bottom: 28px; }
-    .stage { padding: 28px 16px 22px; }
-    .transcript { padding: 18px; }
-    #out { font-size: 19px; }
-  }
-  @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
-</style>
+<!-- Only this site's own scripts, styles and fonts; network access only to this site and the model host. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; font-src 'self'; img-src 'self' data:; connect-src 'self' https://huggingface.co https://*.huggingface.co https://*.hf.co; media-src 'self' blob:; worker-src 'self'; manifest-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'">
+<meta name="referrer" content="no-referrer">
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="style.css">
 </head>
 <body>
 <div class="wrap">
@@ -189,12 +32,28 @@
   <main>
     <section class="card stage" id="stage">
       <div class="setup" id="setup" hidden>
-        <h2>One-time setup</h2>
-        <p id="setupText">Download the speech model to this device.</p>
-        <button class="btn btn-primary" id="download">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12m0 0l-4-4m4 4l4-4M5 21h14"/></svg>
-          <span id="downloadLabel">Download model</span>
-        </button>
+        <h2 id="setupTitle">Choose a model</h2>
+        <p id="setupText">It downloads once and then stays on this device.</p>
+        <div class="models" id="models" role="radiogroup" aria-label="Model size"></div>
+        <div class="device" id="device"></div>
+        <div class="file-step" id="fileStep" hidden>
+          <p>This size is too big to host with the site, so it comes as a separate file. Download it once, then choose it here. The page checks every byte against the published fingerprint before using it.</p>
+          <div class="setup-actions">
+            <a class="btn btn-primary" id="fileLink" target="_blank" rel="noopener noreferrer">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12m0 0l-4-4m4 4l4-4M5 21h14"/></svg>
+              <span id="fileLinkLabel">1 · Download file</span>
+            </a>
+            <button class="btn" id="fileChoose">2 · Choose the file…</button>
+          </div>
+          <input id="modelFile" type="file" accept=".onnx" hidden>
+        </div>
+        <div class="setup-actions">
+          <button class="btn btn-primary" id="download">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12m0 0l-4-4m4 4l4-4M5 21h14"/></svg>
+            <span id="downloadLabel">Download model</span>
+          </button>
+          <button class="btn btn-ghost" id="cancelPick" hidden>Cancel</button>
+        </div>
         <div id="bar" hidden><div class="progress"><div></div></div><div class="progress-label" id="barLabel"></div></div>
       </div>
 
@@ -216,6 +75,7 @@
         Upload a voice note
       </button>
       <input id="file" type="file" accept="audio/*,.ogg,.opus,.m4a" hidden>
+      <button class="model-chip" id="modelBtn" hidden><span id="modelName"></span><span class="sep">·</span><span id="modelSpeed"></span><span class="change">Change</span></button>
       </div>
     </section>
 
