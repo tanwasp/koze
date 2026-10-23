@@ -18,11 +18,12 @@ const ui = {
   setupText: $("setupText"), models: $("models"), device: $("device"), cancelPick: $("cancelPick"),
   download: $("download"), downloadLabel: $("downloadLabel"), bar: $("bar"), barLabel: $("barLabel"),
   mic: $("mic"), micLabel: $("micLabel"), timer: $("timer"), wave: $("wave"), pick: $("pick"), file: $("file"),
-  modelBtn: $("modelBtn"), modelName: $("modelName"), modelSpeed: $("modelSpeed"),
+  fileStep: $("fileStep"), fileLink: $("fileLink"), fileLinkLabel: $("fileLinkLabel"), fileChoose: $("fileChoose"),
+  modelFile: $("modelFile"), modelBtn: $("modelBtn"), modelName: $("modelName"), modelSpeed: $("modelSpeed"),
   out: $("out"), meta: $("meta"), copy: $("copy"), copyLabel: $("copyLabel"), history: $("history"),
 };
 
-let ort, session, vocab, backend;
+let ort, session, vocab, backend, cacheFailed = false;
 let models = [], current = null, device = null, cached = {}, downloading = false;
 
 // ------------------------------------------------------------------ model
@@ -65,10 +66,18 @@ async function sha256Hex(bytes) {
 }
 
 // Parts already in the cache were checked when they were stored. A part fresh from the
-// network must match the hash in models.json before it is used or cached.
-async function fetchModelBytes(m) {
+// network, or read from a file the person picked, must match the hash in models.json
+// before it is used or cached.
+async function fetchModelBytes(m, file) {
+  if (file && file.size !== m.bytes) {
+    throw new Error(`${file.name} isn't the right file (expected ${m.fileName || "the model file"}, ${fmtBytes(m.bytes)})`);
+  }
   let cache = null;
-  try { cache = await caches.open(cacheName(m)); } catch { /* private mode: download without caching */ }
+  cacheFailed = false;
+  try {
+    navigator.storage?.persist?.().catch(() => {}); // ask the browser not to evict a big model
+    cache = await caches.open(cacheName(m));
+  } catch { cacheFailed = true; /* private mode: download without caching */ }
   const buf = new Uint8Array(m.bytes);
   let offset = 0;
   showBar(0, m.bytes);
@@ -77,7 +86,10 @@ async function fetchModelBytes(m) {
     const start = offset;
     let res = cache && (await cache.match(url));
     const fresh = !res;
-    if (fresh) {
+    if (fresh && file) {
+      res = new Response(file.slice(start, start + part.bytes));
+    } else if (fresh) {
+      if (m.download) throw new Error("Part of the model is missing from this device. Choose the file again");
       res = await fetch(url, { credentials: "omit", referrerPolicy: "no-referrer" });
       if (!res.ok) throw new Error(`Download failed for ${part.path} (${res.status})`);
     }
@@ -93,10 +105,18 @@ async function fetchModelBytes(m) {
     const bytes = buf.subarray(start, offset);
     if (fresh) {
       if (bytes.length !== part.bytes || (await sha256Hex(bytes)) !== part.sha256) {
-        throw new Error(`${part.path} failed its integrity check, so it was not used`);
+        throw new Error(file ? `${file.name} doesn't match the published model, so it was not used`
+          : `${part.path} failed its integrity check, so it was not used`);
       }
       if (cache) {
-        try { await cache.put(url, new Response(bytes.slice())); } catch { cache = null; }
+        try {
+          await cache.put(url, new Response(bytes.slice()));
+        } catch {
+          // Usually storage is full. Drop the partial copy rather than leave it taking space.
+          cache = null;
+          cacheFailed = true;
+          await caches.delete(cacheName(m)).catch(() => {});
+        }
       }
     }
   }
@@ -111,18 +131,18 @@ async function fetchVocab(m) {
   return { pieces: v.pieces, control: new Set(v.control) };
 }
 
-async function loadModel(m) {
+async function loadModel(m, file) {
   ui.mic.disabled = ui.pick.disabled = ui.modelBtn.disabled = true;
   ui.setup.hidden = !!(cached[m.id] && !session);
   try {
-    downloading = !cached[m.id];
-    setStatus(downloading ? "Downloading…" : "Loading model…", "busy");
+    downloading = cached[m.id] ? "" : file ? "Checking file" : "Downloading";
+    setStatus(downloading ? `${downloading}…` : "Loading model…", "busy");
     if (!ort) {
       ort = await import(`${ORT_DIR}ort.webgpu.min.mjs`);
       ort.env.wasm.wasmPaths = ORT_DIR;
       ort.env.wasm.numThreads = self.crossOriginIsolated ? Math.min(4, navigator.hardwareConcurrency || 1) : 1;
     }
-    const [bytes, v] = await Promise.all([fetchModelBytes(m), fetchVocab(m)]);
+    const [bytes, v] = await Promise.all([fetchModelBytes(m, file), fetchVocab(m)]);
     cached[m.id] = await isCached(m);
     setStatus("Preparing model…", "busy");
     if (!ui.setup.hidden) ui.barLabel.textContent = "Preparing the model…";
@@ -139,6 +159,10 @@ async function loadModel(m) {
     setStatus(`Ready · ${m.params} · ${backend === "webgpu" ? "GPU" : "CPU"}`, "ok");
     ui.pill.title = backend === "webgpu" ? "Running on your GPU (WebGPU)" : "Running on your CPU (WebAssembly)";
     showModelChip();
+    if (cacheFailed) {
+      ui.meta.replaceChildren(span(`This browser didn't have room to keep ${m.name} on this device, so it works for now `
+        + "but will need setting up again next visit. Freeing disk space usually fixes this.", "err"));
+    }
     setStatus("Checking speed…", "busy");
     await speedCheck(m);
     setStatus(`Ready · ${m.params} · ${backend === "webgpu" ? "GPU" : "CPU"}`, "ok");
@@ -283,6 +307,13 @@ function chosen() {
 
 function updateDownload() {
   const m = chosen();
+  const needsFile = !!m.download && !cached[m.id];
+  ui.fileStep.hidden = !needsFile;
+  ui.download.hidden = needsFile;
+  if (needsFile) {
+    ui.fileLink.href = m.download;
+    ui.fileLinkLabel.textContent = `1 · Download file · ${fmtBytes(m.bytes)}`;
+  }
   ui.downloadLabel.textContent = m.id === current?.id ? `Keep ${m.name}`
     : cached[m.id] ? `Use ${m.name}` : `Download ${m.name} · ${fmtBytes(m.bytes)}`;
 }
@@ -292,6 +323,14 @@ ui.download.onclick = () => {
   if (m.id === current?.id) return (ui.setup.hidden = true);
   ui.download.hidden = ui.cancelPick.hidden = true;
   loadModel(m);
+};
+ui.fileChoose.onclick = () => ui.modelFile.click();
+ui.modelFile.onchange = () => {
+  const f = ui.modelFile.files[0];
+  ui.modelFile.value = "";
+  if (!f) return;
+  ui.fileStep.hidden = ui.cancelPick.hidden = true;
+  loadModel(chosen(), f);
 };
 ui.cancelPick.onclick = () => { ui.setup.hidden = true; };
 ui.modelBtn.onclick = () => showPicker();
@@ -496,7 +535,7 @@ function showBar(frac, total) {
   ui.bar.querySelector(".progress > div").style.width = `${(frac * 100).toFixed(1)}%`;
   const mb = (x) => Math.round(x / 2 ** 20);
   ui.barLabel.textContent = `${mb(frac * total)} of ${mb(total)} MB`;
-  setStatus(downloading ? `Downloading ${Math.round(frac * 100)}%` : "Loading model…", "busy");
+  setStatus(downloading ? `${downloading} ${Math.round(frac * 100)}%` : "Loading model…", "busy");
 }
 // rtf: seconds of compute per second of audio.
 function fmtSpeed(rtf) {

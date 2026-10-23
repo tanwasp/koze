@@ -4,8 +4,9 @@ model registry (web/models.json) with a SHA-256 for every model part.
     # pack one converted model into parts + manifest.json (also used for the Hugging Face upload)
     python tools/build_site.py pack --model-dir build/model --report build/report.json --out site/model
 
-    # build the site; --remote adds a model whose parts live elsewhere, pinned by its manifest
-    python tools/build_site.py site --local site-model-dir --remote build/1b/manifest.json=https://huggingface.co/... --out site
+    # build the site. --remote adds a model whose parts the page fetches from another host;
+    # --from-file adds one the person downloads (from a GitHub Release) and picks in the page.
+    python tools/build_site.py site --local build/pack --from-file build/1b/manifest.json=https://github.com/o/r/releases/download/models --out site
 
 The page trusts models.json (served from this site) and checks every downloaded part
 against it, so a model host can't swap in a different file.
@@ -116,13 +117,18 @@ def vendor(out: Path, cache: Path) -> None:
     (out / "vendor" / "NOTICE.txt").write_text("Third-party files served by this site, from npm:\n\n" + "\n".join(notices) + "\n")
 
 
+def release_name(manifest: dict) -> str:
+    """File name for a model attached to a GitHub Release (see the `large` CI job)."""
+    return f"koze-{manifest['card']}-{manifest['sha256'][:12]}.onnx"
+
+
 def model_entry(manifest: dict, base: str) -> dict:
     about = ABOUT.get(manifest["card"], {"id": manifest["card"], "name": manifest["card"], "params": "?", "blurb": ""})
     return about | {"card": manifest["card"], "base": base} | {
         k: manifest[k] for k in ("bytes", "sha256", "parts", "vocab")}
 
 
-def build_site(local: list[Path], remote: list[str], out: Path, cache: Path) -> None:
+def build_site(local: list[Path], remote: list[str], from_file: list[str], out: Path, cache: Path) -> None:
     staged = {}
     for d in local:  # copy before wiping out, in case a local model dir lives inside it
         staged[d] = (json.loads((d / "manifest.json").read_text()), {p.name: p.read_bytes() for p in d.iterdir()})
@@ -142,6 +148,18 @@ def build_site(local: list[Path], remote: list[str], out: Path, cache: Path) -> 
     for r in remote:
         path, base = r.split("=", 1)
         models.append(model_entry(json.loads(Path(path).read_text()), base.rstrip("/") + "/"))
+    # GitHub Release downloads have no CORS headers, so the page can't fetch these itself.
+    # The person downloads the file, picks it in the page, and the page checks every part
+    # against the hashes here. Only the vocabulary is served from this site.
+    for r in from_file:
+        path, url_prefix = r.split("=", 1)
+        manifest_path = Path(path)
+        manifest = json.loads(manifest_path.read_text())
+        sub = f"model-{manifest['card']}"
+        (out / sub).mkdir()
+        shutil.copy(manifest_path.parent / manifest["vocab"]["path"], out / sub / manifest["vocab"]["path"])
+        name = release_name(manifest)
+        models.append(model_entry(manifest, f"{sub}/") | {"download": f"{url_prefix.rstrip('/')}/{name}", "fileName": name})
     models.sort(key=lambda m: m["bytes"])
     (out / "models.json").write_text(json.dumps({"models": models}, indent=1))
     (out / ".nojekyll").write_text("")
@@ -159,14 +177,19 @@ def main() -> None:
     st = sub.add_parser("site")
     st.add_argument("--local", action="append", default=[], help="a directory written by `pack`")
     st.add_argument("--remote", action="append", default=[], help="MANIFEST_PATH=BASE_URL")
+    st.add_argument("--from-file", action="append", default=[], help="MANIFEST_PATH=RELEASE_DOWNLOAD_URL_PREFIX")
     st.add_argument("--out", required=True)
     st.add_argument("--cache", default="build/vendor")
+    rn = sub.add_parser("release-name")
+    rn.add_argument("--manifest", required=True)
     a = p.parse_args()
-    if a.cmd == "pack":
+    if a.cmd == "release-name":
+        print(release_name(json.loads(Path(a.manifest).read_text())))
+    elif a.cmd == "pack":
         m = pack(Path(a.model_dir), Path(a.report), Path(a.out))
         print(json.dumps({k: v for k, v in m.items() if k != "parts"} | {"parts": len(m["parts"])}, indent=1))
     else:
-        build_site([Path(d) for d in a.local], a.remote, Path(a.out), Path(a.cache))
+        build_site([Path(d) for d in a.local], a.remote, a.from_file, Path(a.out), Path(a.cache))
 
 
 if __name__ == "__main__":

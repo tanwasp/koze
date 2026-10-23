@@ -36,6 +36,17 @@
         <p id="setupText">It downloads once and then stays on this device.</p>
         <div class="models" id="models" role="radiogroup" aria-label="Model size"></div>
         <div class="device" id="device"></div>
+        <div class="file-step" id="fileStep" hidden>
+          <p>This size is too big to host with the site, so it comes as a separate file. Download it once, then choose it here. The page checks every byte against the published fingerprint before using it.</p>
+          <div class="setup-actions">
+            <a class="btn btn-primary" id="fileLink" target="_blank" rel="noopener noreferrer">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12m0 0l-4-4m4 4l4-4M5 21h14"/></svg>
+              <span id="fileLinkLabel">1 · Download file</span>
+            </a>
+            <button class="btn" id="fileChoose">2 · Choose the file…</button>
+          </div>
+          <input id="modelFile" type="file" accept=".onnx" hidden>
+        </div>
         <div class="setup-actions">
           <button class="btn btn-primary" id="download">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12m0 0l-4-4m4 4l4-4M5 21h14"/></svg>

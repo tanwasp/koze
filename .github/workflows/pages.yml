@@ -19,12 +19,15 @@ env:
 
 # Third-party actions are pinned to commits so a moved tag can't change what runs here.
 jobs:
-  # The 1B model is about 1 GB, and GitHub Pages caps a site at 1 GB, so it is published
-  # to a Hugging Face model repo instead. Runs once the HF_REPO variable is set
-  # (Settings > Secrets and variables > Actions); publishing also needs the HF_TOKEN secret.
+  # The 1B model is about 1 GB, and GitHub Pages caps a site at 1 GB, so it can't sit next
+  # to the 300M model. By default it is attached to the "models" GitHub Release, which needs
+  # no extra credentials; browsers can't fetch release files from the page (no CORS), so the
+  # person downloads the file and picks it in the page. If the HF_REPO variable and HF_TOKEN
+  # secret are set, it goes to Hugging Face instead and the page downloads it directly.
   large:
-    if: vars.HF_REPO != ''
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     timeout-minutes: 150
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -64,8 +67,24 @@ jobs:
         if: steps.cache.outputs.cache-hit != 'true'
         run: python tools/build_site.py pack --model-dir build/large --report build/large-report.json --out build/large-pack
 
+      - name: Attach to the models release
+        if: github.event_name != 'pull_request' && vars.HF_REPO == ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          name=$(python tools/build_site.py release-name --manifest build/large-pack/manifest.json)
+          gh release view models >/dev/null 2>&1 || gh release create models --title "Model files" \
+            --notes "Large model files for the Koze web app. Download one, then choose it in the page, which checks it against the fingerprint published with the site."
+          if gh release view models --json assets -q '.assets[].name' | grep -qx "$name"; then
+            echo "$name is already attached"
+          else
+            cat build/large-pack/*.part* > "build/$name"
+            test "$(sha256sum "build/$name" | cut -d' ' -f1)" = "$(python -c "import json; print(json.load(open('build/large-pack/manifest.json'))['sha256'])")"
+            gh release upload models "build/$name"
+          fi
+
       - name: Publish to Hugging Face
-        if: github.event_name != 'pull_request'
+        if: github.event_name != 'pull_request' && vars.HF_REPO != ''
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
           HF_REPO: ${{ vars.HF_REPO }}
@@ -76,7 +95,9 @@ jobs:
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: large-manifest
-          path: build/large-pack/manifest.json
+          path: |
+            build/large-pack/manifest.json
+            build/large-pack/vocab.json
 
   build:
     needs: large
@@ -128,8 +149,10 @@ jobs:
         run: |
           python tools/build_site.py pack --model-dir build/model --report build/report.json --out build/pack
           remote=()
-          if [ -f build/large-manifest/manifest.json ]; then
+          if [ -f build/large-manifest/manifest.json ] && [ -n "$HF_REPO" ]; then
             remote=(--remote "build/large-manifest/manifest.json=https://huggingface.co/$HF_REPO/resolve/main/$LARGE_CARD/")
+          elif [ -f build/large-manifest/manifest.json ]; then
+            remote=(--from-file "build/large-manifest/manifest.json=https://github.com/${{ github.repository }}/releases/download/models")
           fi
           python tools/build_site.py site --local build/pack "${remote[@]}" --out site
 
